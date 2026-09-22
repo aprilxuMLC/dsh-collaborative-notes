@@ -558,6 +558,33 @@ describe("便签面板状态机（v1.1 并发模型）", () => {
     await waitFor(() => expect(fetchFn.mock.calls.some(([, opts]) => opts?.method === "POST" && JSON.parse(opts.body).action === "custom" && JSON.parse(opts.body).path === listing.path)).toBe(true));
   });
 
+  it("Notes normal view keeps composer and a multi-Note list under one scroll owner", async () => {
+    const body = Array.from({ length: 12 }, (_, i) => serializeItem(makeItem({
+      kind: "source-independent",
+      captureOrigin: SESSION,
+      comment: `multi-note-${i + 1}`,
+    }))).join("\n\n");
+    vi.stubGlobal("fetch", vi.fn((url, opts) => {
+      if (String(url).includes("/setup/") && !opts?.method) return Promise.resolve(makeResponse(JSON.stringify({ ok: true, state: "INITIALIZED", legacy: false })));
+      if (opts?.method === "PUT") return Promise.resolve(makeResponse("ok", { mtime: "2222" }));
+      return Promise.resolve(makeResponse(body, { mtime: "1111" }));
+    }));
+    mountPanel();
+    await openPanel();
+    const content = document.querySelector('[data-notes-content="1"]');
+    const list = document.querySelector('[data-notes-list="1"]');
+    expect(content).toBeTruthy();
+    expect(list).toBeTruthy();
+    expect(content.style.overflowY).toBe("auto");
+    expect(content.style.minHeight).toBe("0");
+    expect(list.style.flex).toBe("0 0 auto");
+    expect(list.style.overflowY).toBe("visible");
+    expect(list.textContent).toContain("multi-note-1");
+    expect(list.textContent).toContain("multi-note-12");
+    expect(screen.getByRole("button", { name: "保存便签" })).toBeTruthy();
+    expect([...list.querySelectorAll("button")].some((button) => button.textContent === "编辑")).toBe(true);
+  });
+
   it("Workspace setup browse 使用真实 DirectoryEntry → 可导航子目录并隐藏 hidden 行", async () => {
     const rootListing = {
       path: "/home/test-user",

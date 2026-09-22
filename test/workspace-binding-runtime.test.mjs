@@ -3,9 +3,9 @@
 // home or a production runtime.
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { tmpdir } from "node:os";
-import { allocateFreshItemKey, createWorkspaceBindingRuntime, BINDING_DOMAIN_SPEC, NotesOperationError } from "../lib/workspace-binding-runtime.js";
+import { allocateFreshItemKey, createWorkspaceBindingRuntime, BINDING_DOMAIN_SPEC, NotesOperationError, isAbsoluteNotesPath } from "../lib/workspace-binding-runtime.js";
 import { chooseNotesDirectory } from "../lib/notes-picker.js";
 import { evaluateExactDerivation } from "../lib/carry-merge.js";
 import { KIND_SOURCE_AWARE, KIND_SOURCE_INDEPENDENT, makeItem, parseLaneBody, serializeItem, withItemKey } from "../lib/structured-item.js";
@@ -102,6 +102,16 @@ function makeCtx(root, domain, fs, tools) {
 }
 
 async function main() {
+  // The test host is macOS, so exercise the same helper with both platform
+  // path implementations.  The production call uses node:path for the
+  // running host; this matrix prevents a separator-prefix regression from
+  // rejecting Windows drive-qualified picker results.
+  assert.equal(isAbsoluteNotesPath("C:\\workspace\\notes", win32), true);
+  assert.equal(isAbsoluteNotesPath("C:\\workspace\\notes", posix), false);
+  assert.equal(isAbsoluteNotesPath("C:\\Workspace With Space\\资料\\test1\\notes", win32), true);
+  assert.equal(isAbsoluteNotesPath("/workspace/notes", posix), true);
+  assert.equal(isAbsoluteNotesPath("notes", posix), false);
+
   let allocationCalls = 0;
   assert.equal(
     allocateFreshItemKey(new Set(["ik-existing"]), () => ["ik-existing", "ik-new"][allocationCalls++]),

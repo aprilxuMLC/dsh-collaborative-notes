@@ -3159,7 +3159,11 @@ function NotesController(React, clientCtx = {}) {
     }
     const notesListEl = createElement(
       "div",
-      { style: { flex: "1", minHeight: "0", overflowY: "auto", padding: "2px 0 6px", borderTop: "1px solid #e5e7eb" }, "data-notes-list": "1" },
+      // The parent Notes content region owns normal-view scrolling.  Keeping
+      // the list intrinsic prevents a tall composer/editor from overflowing
+      // behind the persistent footer while the list competes for a second
+      // scrollport.
+      { style: { flex: "0 0 auto", overflowY: "visible", padding: "2px 0 6px", borderTop: "1px solid #e5e7eb" }, "data-notes-list": "1" },
       notesListHeaderEl,
       ...listCardEls
     );
@@ -3637,7 +3641,10 @@ function NotesController(React, clientCtx = {}) {
             )
           : createElement(
               "div",
-              { style: { flex: "1", minHeight: "0", display: "flex", flexDirection: "column", background: "#fff" } },
+              // One bounded scroll owner for the normal Notes view: composer,
+              // list, lower-card editors, and their actions travel together.
+              // Header/lane controls/footer remain persistent siblings.
+              { style: { flex: "1", minHeight: "0", display: "flex", flexDirection: "column", overflowY: "auto", background: "#fff" }, "data-notes-content": "1" },
               editingIndex === null ? composerCardEl : null,
               notesListEl
             ),
