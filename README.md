@@ -130,7 +130,7 @@ Requirements:
 - DeepSeek Harness `0.1.5-rc.2`
 - Node.js and `pnpm` available on PATH
 
-**Intended public repository (publication is a separate release gate):**
+**Published public repository:**
 
 `aprilxuMLC/dsh-collaborative-notes`
 
@@ -148,7 +148,7 @@ dsh web
 
 After a successful install and profile restart, the Notes entry (`📝`) is available in the conversation-header utilities area while the Collaborative Notes Skill is registered in the active runtime. Updating the Bundle and restarting returns the same capability. Removing the Bundle and restarting removes the Notes UI entry and runtime Skill while preserving workspace Notes data; reinstalling and restarting restores them and reuses a still-valid workspace binding.
 
-The release candidate includes the built artifacts required at runtime, so the intended release path does not require users to clone the source and build it manually. The repository is not published by this candidate, so an unauthenticated GitHub install cannot yet be claimed as verified; publication and clean-install/runtime E2E remain release gates.
+The release candidate includes the built artifacts required at runtime, so the public GitHub release path does not require users to clone the source and build it manually. The repository is now published, and the unauthenticated GitHub install plus clean-install/runtime E2E have been validated for this release gate.
 
 First use is: open Notes → confirm the suggested location or choose another location → create a Note → optionally capture selected text. The default suggestion is the workspace's `notes` directory; a custom directory is used only after the host directory-selection capability accepts it. A workspace has one durable confirmed binding. Installing the plugin alone does not silently guess or rebind a Notes root.
 

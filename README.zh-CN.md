@@ -142,7 +142,7 @@ Collaborative Notes 也刻意区分“已经处理”和“已经删除”。工
 - DeepSeek Harness `0.1.5-rc.2`
 - Node.js 与 `pnpm` 可在 PATH 中使用
 
-**计划公开仓库（发布本身是单独的 release gate，目前尚未发布）：**
+**已发布的公开仓库：**
 
 `aprilxuMLC/dsh-collaborative-notes`
 
@@ -160,7 +160,7 @@ dsh web
 
 安装并成功重启 profile 后，Notes 入口（`📝`）会出现在 conversation header 的工具区，Collaborative Notes Skill 也会在当前运行时注册。更新 Bundle 并重启后，这项能力会恢复。移除 Bundle 并重启后，Notes UI 入口和运行时 Skill 会消失，但 workspace Notes 数据保留；重新安装并重启后，两者恢复，并继续使用仍然有效的 workspace binding。
 
-当前 release candidate 已包含运行所需的构建产物，因此目标发布形态不要求用户 clone 源码后再手工 build。候选尚未发布，因此不能声称未经认证的 GitHub 安装已经验证；公开仓库后的 clean-install 与 runtime E2E 仍是 release gate。
+当前 release candidate 已包含运行所需的构建产物，因此公开 GitHub 发布形态不要求用户 clone 源码后再手工 build。仓库现已发布，未经认证的 GitHub 安装以及 clean-install/runtime E2E 已完成本 release gate 的验证。
 
 第一次使用路径是：打开 Notes → 确认建议位置或选择其它位置 → 创建一条 Note → 可选地引用选中的文字。默认建议位置是 workspace 下的 `notes` 目录；自定义目录只有在 host 的目录选择能力接受后才会使用。一个 workspace 只有一个持久化确认的 binding。插件不会仅仅因为安装完成，就静默替用户猜测或重新绑定一个 Notes root。
 
