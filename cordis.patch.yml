@@ -1,0 +1,29 @@
+# dsh-collab-notes bundle patch: insert the plugin row into the host composition.
+#
+# `name` must equal the package name (the client registry resolves the package
+# by it). The row carries no install-specific assumptions.
+#
+# Optional per-install customization — override layer labels / consumption
+# targets through `config` (semantic layer keys; display ids are derived from
+# displayOrder):
+#
+#   - insert:
+#       - id: dsh-collab-notes
+#         name: dsh-collab-notes
+#         config:
+#           displayOrder:
+#             - conversation_todo
+#             - deferred_work
+#             - knowledge_candidate
+#             - lesson_candidate
+#           layerOverrides:
+#             conversation_todo: { label: L1 会话待办 }
+#             deferred_work:
+#               label: L2 待讨论
+#               target: BACKLOG.md
+#
+# (In your profile's own cordis.patch.yml, a row with the same `id` overrides
+# this bundle row, so local personalization never forks the shared code.)
+- insert:
+    - id: dsh-collab-notes
+      name: dsh-collab-notes
