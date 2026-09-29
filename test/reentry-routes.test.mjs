@@ -245,7 +245,7 @@ console.log("— live fast path: durable message identity —");
   const live = makeLiveCtx({ events: movedEvents, locator: identity, snapshot: "MOVED", itemKey: "ik-identity" });
   const result = await call(live.ctx, { currentSessionId: SID_A, locator: identity, noteRef: live.noteRef, consent: "per-request", contextWindow: 0 });
   ok("message identity re-entry survives eventSeq movement", result.ok === true && result.status === "exact" && result.exact.text === "MOVED" && result.exact.segments[0].eventSeq === 101);
-  ok("message identity response carries identity and exact whole-message span", result.exact.messageId === "m-moved" && result.exact.segments[0].start === 0 && result.exact.segments[0].end === 5 && result.exact.segments[0].exactSpan === undefined && result.exact.perSegment[0].hint.messageId === "m-moved");
+  ok("message identity response carries identity and browser-local cue input", result.exact.messageId === "m-moved" && result.exact.segments[0].start === 0 && result.exact.segments[0].end === 0 && result.exact.events.length === 0 && result.exact.perSegment[0].hint.messageId === "m-moved");
   ok("message identity live path avoids SessionQuery", live.counts.readSession === 0 && live.counts.readEvent === 0);
 
   const partialIdentity = { sessionId: SID_A, messageId: "m-partial" };
@@ -256,7 +256,7 @@ console.log("— live fast path: durable message identity —");
     itemKey: "ik-partial",
   });
   const partialResult = await call(partialLive.ctx, { currentSessionId: SID_A, locator: partialIdentity, noteRef: partialLive.noteRef, consent: "per-request", contextWindow: 0 });
-  ok("UI route partial S unique → exact current cue", partialResult.ok === true && partialResult.exact.text === "target" && partialResult.exact.perSegment.length === 1 && partialResult.exact.perSegment[0].exactSpan === undefined && partialResult.exact.perSegment[0].start === 7 && partialResult.exact.perSegment[0].end === 13);
+  ok("UI route partial S unique → browser-local cue input", partialResult.ok === true && partialResult.exact.text === "target" && partialResult.exact.perSegment.length === 1 && partialResult.exact.perSegment[0].exactSpan === undefined && partialResult.exact.perSegment[0].start === 0 && partialResult.exact.perSegment[0].end === 0);
 
   const duplicateIdentity = { sessionId: SID_A, messageId: "m-duplicate" };
   const duplicateLive = makeLiveCtx({
@@ -266,7 +266,7 @@ console.log("— live fast path: durable message identity —");
     itemKey: "ik-duplicate",
   });
   const duplicateResult = await call(duplicateLive.ctx, { currentSessionId: SID_A, locator: duplicateIdentity, noteRef: duplicateLive.noteRef, consent: "per-request", contextWindow: 0 });
-  ok("UI route partial S duplicate → all exact current cues", duplicateResult.ok === true && duplicateResult.exact.perSegment.length === 2 && duplicateResult.exact.perSegment.every((part) => part.exactSpan === undefined) && duplicateResult.exact.perSegment[0].start === 0 && duplicateResult.exact.perSegment[0].end === 6 && duplicateResult.exact.perSegment[1].start === 9 && duplicateResult.exact.perSegment[1].end === 15);
+  ok("UI route partial S duplicate → browser owns all current occurrences", duplicateResult.ok === true && duplicateResult.exact.perSegment.length === 1 && duplicateResult.exact.perSegment[0].exactSpan === undefined && duplicateResult.exact.perSegment[0].start === 0 && duplicateResult.exact.perSegment[0].end === 0);
 
   const unprojectableLive = makeLiveCtx({
     events: [{ seq: 104, type: "user/message", time: 1, data: { id: "m-unprojectable", content: [{ type: "image", url: "opaque" }], source: { kind: "user" } } }],

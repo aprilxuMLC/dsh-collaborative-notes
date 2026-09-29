@@ -14,10 +14,12 @@ import { render, screen, fireEvent, waitFor, cleanup, within } from "@testing-li
 import React from "react";
 import { getItemKey, makeItem, newItemKey, parseLaneBody, serializeItem, withItemKey } from "../lib/structured-item.js";
 import { composeCarryMerge } from "../lib/carry-merge.js";
+import { captureBrowserSelection } from "../lib/capture-facade.js";
 import { en, zh } from "../src/locales.js";
 
 const SESSION = "session-test-0001-0001";
 let loader;
+let activeCueGeometry = null;
 
 // 加载构建产物：IIFE 执行时调用 window.__ModuleLoader__.load，捕获其回调
 window.__ModuleLoader__ = { load: (cfg) => { loader = cfg; } };
@@ -94,6 +96,22 @@ function makeDeferred() {
   return { promise, resolve, reject };
 }
 
+const visibleAnchorRect = () => ({
+  top: 20, left: 20, right: 320, bottom: 80,
+  width: 300, height: 60, x: 20, y: 20,
+  toJSON: () => ({}),
+});
+const offscreenAnchorRect = () => ({
+  top: 2105, left: 20, right: 320, bottom: 2165,
+  width: 300, height: 60, x: 20, y: 2105,
+  toJSON: () => ({}),
+});
+const zeroAreaCueRect = () => ({
+  top: 20, left: 20, right: 320, bottom: 20,
+  width: 300, height: 0, x: 20, y: 20,
+  toJSON: () => ({}),
+});
+
 /** 默认 fetch：GET 立即返回空内容（mtime 1111），PUT 立即成功（mtime 2222）。 */
 function installDefaultFetch() {
   const fn = vi.fn((_url, opts) => {
@@ -118,11 +136,159 @@ const openRawView = async () => {
   await waitFor(() => expect(screen.queryByRole("button", { name: "原文编辑（高级）" })).toBeNull());
 };
 
+async function runClientReentryCase({ anchorHtml, projectionVersion, projection, start = 0, end = 0, selectedText, eventSeq = 901, hint, messageId, expectExact = true, presentation = {} }) {
+  const host = document.createElement("div");
+  host.innerHTML = anchorHtml;
+  document.body.appendChild(host);
+  const sourcePayload = messageId
+    ? { sessionId: SESSION, messageId }
+    : { projectionVersion, sessionId: SESSION, segments: [{ eventSeq, start, end }] };
+  const itemBlock = [
+    "--- dsh-note v1 begin",
+    "dsh-meta kind: source-aware",
+    `dsh-meta origin: ${SESSION}`,
+    `dsh-meta snapshot-length: ${[...selectedText].length}`,
+    `dsh-meta source-payload: ${JSON.stringify(sourcePayload)}`,
+    "--- dsh-body",
+    selectedText,
+    "--- dsh-note v1 end",
+  ].join("\n");
+  const fetchFn = vi.fn((url, opts) => {
+    if (String(url).includes("/notes-api/reentry")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          status: "exact",
+          sameSession: true,
+          contextWindow: 2,
+          exact: {
+            sessionId: SESSION,
+            ...(projectionVersion === undefined ? {} : { projectionVersion }),
+            ...(messageId ? { messageId } : {}),
+            segments: [{ eventSeq, start, end }],
+            text: selectedText,
+            perSegment: [{ eventSeq, start, end, text: selectedText, hint }],
+            events: [{ eventSeq, projection }],
+          },
+          context: { perEvent: [] },
+        }),
+      });
+    }
+    if (opts?.method === "PUT") return Promise.resolve(makeResponse("ok", { mtime: "2222" }));
+    return Promise.resolve(makeResponse(itemBlock, { mtime: "1111" }));
+  });
+  vi.stubGlobal("fetch", fetchFn);
+  const rangeSpy = vi.spyOn(document, "createRange");
+  const { apply } = loader.factory((id) => {
+    if (id === "react") return React;
+    throw new Error(`unexpected require: ${id}`);
+  });
+  let registered = null;
+  const ctx = { slots: { inject: (_name, fn) => { registered = fn(); }, register: (cfg, Component) => ({ cfg, Component }) } };
+  apply(ctx, React);
+  const view = render(React.createElement(registered.Component, { sessionId: SESSION }));
+  fireEvent.click(screen.getByTitle("协作便签"));
+  await waitFor(() => screen.getByText(/已保存便签\s*1/));
+  const anchor = host.querySelector("[data-chat-anchor-key]");
+  const presentationState = {
+    messageVisible: presentation.initialVisible !== false,
+    cueVisible: presentation.initialCueVisible === undefined
+      ? presentation.initialVisible !== false
+      : presentation.initialCueVisible,
+    cueRect: presentation.cueRect || "normal",
+    cueScrollMakesVisible: presentation.cueScrollMakesVisible !== false,
+    cueScrollCalls: 0,
+  };
+  anchor.__dshPresentationState = presentationState;
+  vi.spyOn(anchor, "getBoundingClientRect").mockImplementation(() => presentationState.messageVisible ? visibleAnchorRect() : offscreenAnchorRect());
+  const scrollSpy = vi.spyOn(anchor, "scrollIntoView").mockImplementation(() => {
+    if (presentation.scrollMakesVisible !== false) presentationState.messageVisible = true;
+    presentation.onScroll?.({ anchor, presentationState });
+  });
+  presentation.setup?.({ host, anchor, presentationState });
+  activeCueGeometry = presentationState;
+  fireEvent.click(screen.getByRole("button", { name: "↪ 回来源" }));
+  if (expectExact === "presentation-failed") {
+    await waitFor(() => expect(screen.getByText(/目标未能呈现在视口|could not be presented in the viewport/)).toBeTruthy(), { timeout: 3000 });
+  } else if (expectExact) {
+    await waitFor(() => expect(screen.getByText(/已回到来源 ✓（exact locus 已定位并高亮）/)).toBeTruthy(), { timeout: 3000 });
+  } else {
+    await waitFor(() => expect(screen.getAllByText(/broader whole-message cue（非 exact）/).length).toBeGreaterThan(0), { timeout: 3000 });
+  }
+  const marks = [...anchor.querySelectorAll("mark[data-dsh-reentry]")];
+  const result = {
+    marks: marks.map((mark) => mark.textContent),
+    outline: anchor.style.outline || "",
+    rangeTexts: rangeSpy.mock.results
+      .map((entry) => entry.value?.toString?.())
+      .filter((text) => typeof text === "string"),
+    reentryCalls: fetchFn.mock.calls.filter(([url]) => String(url).includes("/notes-api/reentry")),
+    scrollCalls: scrollSpy.mock.calls.length + presentationState.cueScrollCalls,
+  };
+  rangeSpy.mockRestore();
+  if (!presentation.keepMounted) {
+    view.unmount();
+    host.remove();
+    cleanup();
+  }
+  if (presentation.keepMounted) Object.assign(result, { host, view });
+  activeCueGeometry = null;
+  return result;
+}
+
 beforeEach(() => {
   vi.stubGlobal("confirm", vi.fn(() => true));
+  const nativeCreateElement = document.createElement;
+  vi.spyOn(document, "createElement").mockImplementation(function (name, ...args) {
+    const element = nativeCreateElement.call(this, name, ...args);
+    if (String(name).toLowerCase() === "mark") {
+      Object.defineProperty(element, "getBoundingClientRect", {
+        configurable: true,
+        value: () => activeCueGeometry?.cueRect === "zero"
+          ? zeroAreaCueRect()
+          : activeCueGeometry?.cueVisible === false ? offscreenAnchorRect() : visibleAnchorRect(),
+      });
+      Object.defineProperty(element, "scrollIntoView", {
+        configurable: true,
+        value: () => {
+          if (!activeCueGeometry) return;
+          activeCueGeometry.cueScrollCalls += 1;
+          if (activeCueGeometry.cueScrollMakesVisible) activeCueGeometry.cueVisible = true;
+        },
+      });
+    }
+    return element;
+  });
+  const elementProto = window.HTMLElement.prototype;
+  const nativeRect = elementProto.getBoundingClientRect;
+  vi.spyOn(elementProto, "getBoundingClientRect").mockImplementation(function () {
+    const anchor = this.closest?.("[data-chat-anchor-key]");
+    const state = anchor?.__dshPresentationState;
+    if (this.getAttribute?.("data-dsh-reentry") === "1") {
+      if (state?.cueRect === "zero") return zeroAreaCueRect();
+      if (state) return state.cueVisible ? visibleAnchorRect() : offscreenAnchorRect();
+      return visibleAnchorRect();
+    }
+    if (this.hasAttribute?.("data-chat-anchor-key")) {
+      if (state) return state.messageVisible ? visibleAnchorRect() : offscreenAnchorRect();
+      return visibleAnchorRect();
+    }
+    return nativeRect.call(this);
+  });
+  vi.spyOn(elementProto, "scrollIntoView").mockImplementation(function () {
+    const anchor = this.closest?.("[data-chat-anchor-key]");
+    const state = anchor?.__dshPresentationState;
+    if (this.getAttribute?.("data-dsh-reentry") === "1" && state) {
+      state.cueScrollCalls += 1;
+      if (state.cueScrollMakesVisible) state.cueVisible = true;
+    }
+  });
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -2009,6 +2175,263 @@ describe("便签面板状态机（v1.1 并发模型）", () => {
     cleanup();
   });
 
+  it("client Range reconstruction: ordinary and nested-list exact spans remain exact", async () => {
+    const ordinary = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messageORD">ordinary text</div>',
+      projectionVersion: 1,
+      projection: "ordinary text",
+      start: 0,
+      end: 13,
+      selectedText: "ordinary text",
+      hint: { messageId: "ORD" },
+    });
+    expect(ordinary.marks).toEqual(["ordinary text"]);
+    expect(ordinary.rangeTexts).toContain("ordinary text");
+    expect(ordinary.outline).toBe("");
+
+    const nestedAnchor = '<div data-chat-anchor-key="14:assistant-step1:1"><ul><li>第一项\n<ul><li>子项</li></ul>\n</li><li>后一项</li></ul></div>';
+    const nestedCases = [
+      { name: "nested single-point", start: 4, end: 6, selectedText: "子项" },
+      { name: "nested after-boundary", start: 7, end: 10, selectedText: "后一项" },
+      { name: "nested cross-boundary", start: 4, end: 10, selectedText: "子项\n后一项" },
+    ];
+    for (const [index, testCase] of nestedCases.entries()) {
+      const nested = await runClientReentryCase({
+        anchorHtml: nestedAnchor,
+        projectionVersion: 2,
+        projection: "第一项\n子项\n后一项",
+        eventSeq: 902 + index,
+        hint: { turn: 1, step: 1 },
+        ...testCase,
+      });
+      expect(nested.marks.join(""), testCase.name).toBe(testCase.selectedText);
+      expect(nested.rangeTexts, testCase.name).toContain(testCase.selectedText);
+      expect(nested.outline, testCase.name).toBe("");
+    }
+  });
+
+  it("client Range reconstruction counter: adjacent list items without renderer newline get one separator", async () => {
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="14:assistant-step1:1"><ul><li>前</li><li>后</li></ul></div>',
+      projectionVersion: 2,
+      projection: "前\n后",
+      start: 2,
+      end: 3,
+      selectedText: "后",
+      hint: { turn: 1, step: 1 },
+    });
+    expect(result.marks).toEqual(["后"]);
+    expect(result.rangeTexts).toContain("后");
+    expect(result.outline).toBe("");
+  });
+
+  it("Windows shape: shared selected-visible-text semantics preserve cross-item historical S without an LF text node", async () => {
+    const selectedText = "子项\n后一项";
+    const anchorHtml = '<div data-chat-anchor-key="input-messagewindows-nested"><ul><li>子项</li><li>后一项</li></ul></div>';
+    const probe = document.createElement("div");
+    probe.innerHTML = anchorHtml;
+    const rawTextNodes = [...probe.querySelectorAll("li")].map((li) => li.firstChild.data).join("");
+    expect(rawTextNodes).toBe("子项后一项");
+    expect(rawTextNodes).not.toContain("\n");
+    const sanityNodes = [...probe.querySelectorAll("li")].map((li) => li.firstChild);
+    const sanityRange = document.createRange();
+    sanityRange.setStart(sanityNodes[0], 0);
+    sanityRange.setEnd(sanityNodes[1], sanityNodes[1].data.length);
+    expect(sanityRange.toString()).toBe("子项后一项");
+    expect(sanityRange.toString()).not.toBe(selectedText);
+
+    document.body.appendChild(probe);
+    const selection = {
+      rangeCount: 1,
+      isCollapsed: false,
+      getRangeAt: () => sanityRange,
+      toString: () => selectedText,
+    };
+    const selectionSpy = vi.spyOn(window, "getSelection").mockReturnValue(selection);
+    expect(window.getSelection().toString()).toBe(selectedText);
+    const captured = await captureBrowserSelection(SESSION, { projectionVersion: 2 });
+    expect(captured.captureType).toBe("candidate");
+    expect(captured.candidate.evidence.anchors[0].basisText).toBe(selectedText);
+    selectionSpy.mockRestore();
+    probe.remove();
+
+    const result = await runClientReentryCase({
+      anchorHtml,
+      projectionVersion: 2,
+      projection: selectedText,
+      selectedText,
+      messageId: "windows-nested",
+      hint: { messageId: "windows-nested" },
+    });
+    expect(result.marks).toEqual(["子项", "后一项"]);
+    expect(result.rangeTexts).toContain("子项后一项");
+    expect(result.rangeTexts).not.toContain(selectedText);
+    expect(result.outline).toBe("");
+  });
+
+  it("return-to-source presentation: offscreen exact target is scrolled before exact success", async () => {
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messagepresentation-offscreen">SOURCE-A</div>',
+      projectionVersion: 1,
+      projection: "SOURCE-A",
+      selectedText: "SOURCE-A",
+      messageId: "presentation-offscreen",
+      hint: { messageId: "presentation-offscreen" },
+      presentation: { initialVisible: false },
+    });
+    expect(result.scrollCalls).toBe(1);
+    expect(result.marks).toEqual(["SOURCE-A"]);
+  });
+
+  it("return-to-source presentation: only the containing collapsed group is revealed", async () => {
+    const controlClicks = [];
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-flow="conversation"><div data-chat-flow-kind="turn-process" data-chat-turn="5"><button type="button" data-turn-process="5" aria-expanded="false">same label</button></div><div data-chat-flow-kind="turn-process" data-chat-turn="7"><button type="button" data-turn-process="7" aria-expanded="false">4 tool calls · 3 messages</button></div><div data-chat-flow-kind="assistant-step" data-chat-turn="7" data-turn-process-member="true" data-turn-process-hidden="true" hidden="until-found"><div data-chat-anchor-key="input-messagepresentation-collapsed">SOURCE-A</div></div></div>',
+      projectionVersion: 1,
+      projection: "SOURCE-A",
+      selectedText: "SOURCE-A",
+      messageId: "presentation-collapsed",
+      hint: { messageId: "presentation-collapsed" },
+      presentation: {
+        initialVisible: false,
+        scrollMakesVisible: false,
+        setup: ({ host, presentationState }) => {
+          host.querySelectorAll("button[data-turn-process]").forEach((button) => {
+            button.addEventListener("click", () => {
+              const turn = button.getAttribute("data-turn-process");
+              controlClicks.push(turn);
+              if (turn === "7") {
+                button.setAttribute("aria-expanded", "true");
+                const member = host.querySelector('[data-turn-process-member="true"]');
+                member.removeAttribute("hidden");
+                member.removeAttribute("data-turn-process-hidden");
+                presentationState.messageVisible = true;
+                presentationState.cueVisible = true;
+              }
+            });
+          });
+        },
+      },
+    });
+    expect(result.marks).toEqual(["SOURCE-A"]);
+    expect(result.scrollCalls).toBe(1);
+    expect(controlClicks).toEqual(["7"]);
+  });
+
+  it("return-to-source presentation: a visible long message does not count when its exact mark is offscreen", async () => {
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messagepresentation-long"><p>prefix content before the target</p><p>SOURCE-A</p><p>long trailing content after the target</p></div>',
+      projectionVersion: 1,
+      projection: "prefix content before the target\nSOURCE-A\nlong trailing content after the target",
+      start: 35,
+      end: 43,
+      selectedText: "SOURCE-A",
+      eventSeq: 902,
+      hint: { messageId: "presentation-long" },
+      messageId: "presentation-long",
+      presentation: { initialVisible: true, initialCueVisible: false },
+    });
+    expect(result.scrollCalls).toBe(1);
+    expect(result.marks).toEqual(["SOURCE-A"]);
+  });
+
+  it("return-to-source presentation: zero-area exact cue is not presented", async () => {
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messagepresentation-zero">SOURCE-A</div>',
+      projectionVersion: 1,
+      projection: "SOURCE-A",
+      selectedText: "SOURCE-A",
+      messageId: "presentation-zero",
+      hint: { messageId: "presentation-zero" },
+      expectExact: "presentation-failed",
+      presentation: { initialVisible: true, initialCueVisible: true, cueRect: "zero" },
+    });
+    expect(result.marks).toEqual([]);
+    expect(result.outline).toBe("");
+  });
+
+  it("return-to-source presentation: message visibility alone cannot produce a success receipt", async () => {
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messagepresentation-failed">SOURCE-A</div>',
+      projectionVersion: 1,
+      projection: "SOURCE-A",
+      selectedText: "SOURCE-A",
+      messageId: "presentation-failed",
+      hint: { messageId: "presentation-failed" },
+      expectExact: "presentation-failed",
+      presentation: { initialVisible: true, initialCueVisible: false, cueScrollMakesVisible: false },
+    });
+    expect(result.marks).toEqual([]);
+    expect(result.outline).toBe("");
+  });
+
+  it("return-to-source presentation: clear interval starts after the visible cue is presented", async () => {
+    window.__DSH_NOTES_HIGHLIGHT_CLEAR_MS = 60;
+    const result = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messagepresentation-timer">SOURCE-A</div>',
+      projectionVersion: 1,
+      projection: "SOURCE-A",
+      selectedText: "SOURCE-A",
+      messageId: "presentation-timer",
+      hint: { messageId: "presentation-timer" },
+      presentation: { initialVisible: false, keepMounted: true },
+    });
+    // runClientReentryCase returns only after the cue is presented; it must
+    // still be alive before the configured interval elapses.
+    expect(result.marks).toEqual(["SOURCE-A"]);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(result.host.querySelectorAll("mark[data-dsh-reentry]").length).toBe(0);
+    result.view.unmount();
+    result.host.remove();
+    delete window.__DSH_NOTES_HIGHLIGHT_CLEAR_MS;
+  });
+
+  it("message-local Range re-entry covers the approved A-M matrix", async () => {
+    const cases = [
+      { name: "A plain", anchorHtml: '<div data-chat-anchor-key="input-messageml-a">ordinary text</div>', selectedText: "ordinary text", messageId: "ml-a", hint: { messageId: "ml-a" } },
+      { name: "B inline", anchorHtml: '<div data-chat-anchor-key="input-messageml-b"><span>普通</span><strong>加粗</strong><a>链接</a><code>代码</code></div>', selectedText: "普通加粗链接代码", messageId: "ml-b", hint: { messageId: "ml-b" } },
+      { name: "C nested single", anchorHtml: '<div data-chat-anchor-key="14:assistant-step1:1"><ul><li>第一项\n<ul><li>子项</li></ul>\n</li><li>后一项</li></ul></div>', selectedText: "子项", messageId: "ml-c", hint: { turn: 1, step: 1 } },
+      { name: "D nested after", anchorHtml: '<div data-chat-anchor-key="14:assistant-step1:2"><ul><li>第一项\n<ul><li>子项</li></ul>\n</li><li>后一项</li></ul></div>', selectedText: "后一项", messageId: "ml-d", hint: { turn: 1, step: 2 } },
+      { name: "E nested cross-boundary", anchorHtml: '<div data-chat-anchor-key="14:assistant-step1:3"><ul><li>第一项\n<ul><li>子项</li></ul>\n</li><li>后一项</li></ul></div>', selectedText: "子项\n后一项", messageId: "ml-e", hint: { turn: 1, step: 3 } },
+      { name: "F HR", anchorHtml: '<div data-chat-anchor-key="input-messageml-f"><hr><p>ordinary after rule</p></div>', selectedText: "ordinary after rule", messageId: "ml-f", hint: { messageId: "ml-f" } },
+      { name: "G fenced code and Copy", anchorHtml: '<div data-chat-anchor-key="input-messageml-g"><div class="md-code-block"><div><button>Copy</button></div><div>{"kind":"code"}</div></div><p>ordinary after code</p></div>', selectedText: "ordinary after code", messageId: "ml-g", hint: { messageId: "ml-g" } },
+      { name: "H HR and fenced code", anchorHtml: '<div data-chat-anchor-key="input-messageml-h"><hr><div class="md-code-block"><div><button>Copy</button></div><div>const x = 1;</div></div><p>ordinary after code</p></div>', selectedText: "ordinary after code", messageId: "ml-h", hint: { messageId: "ml-h" } },
+      { name: "I code content", anchorHtml: '<div data-chat-anchor-key="input-messageml-i"><div class="md-code-block"><div><button>Copy</button></div><div>{"reason":"extent"}</div></div></div>', selectedText: '"reason":"extent"', messageId: "ml-i", hint: { messageId: "ml-i" } },
+    ];
+    for (const testCase of cases) {
+      const result = await runClientReentryCase(testCase);
+      expect(result.marks.join(""), testCase.name).toBe(testCase.selectedText);
+      expect(result.outline, testCase.name).toBe("");
+    }
+
+    const duplicate = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messageml-j">target / target</div>',
+      selectedText: "target", messageId: "ml-j", hint: { messageId: "ml-j" },
+    });
+    expect(duplicate.marks).toEqual(["target", "target"]);
+
+    const collision = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messageml-k"><button>Copy</button><span>Copy</span></div>',
+      selectedText: "Copy", messageId: "ml-k", hint: { messageId: "ml-k" },
+    });
+    expect(collision.marks).toEqual(["Copy"]);
+    expect(collision.rangeTexts).toContain("Copy");
+
+    const zero = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messageml-l">current message</div>',
+      selectedText: "historical text absent now", messageId: "ml-l", hint: { messageId: "ml-l" }, expectExact: false,
+    });
+    expect(zero.marks).toEqual([]);
+    expect(zero.outline).not.toBe("");
+
+    const think = await runClientReentryCase({
+      anchorHtml: '<div data-chat-anchor-key="input-messageml-m"><div data-variant="think">reasoning only</div><p>ordinary content</p></div>',
+      selectedText: "reasoning only", messageId: "ml-m", hint: { messageId: "ml-m" }, expectExact: false,
+    });
+    expect(think.marks).toEqual([]);
+    expect(think.outline).not.toBe("");
+  });
+
   it("Notes behavior regression: 同一容器重复文本 → 高亮按 extent 位置（非 indexOf first-match）", async () => {
     const host = document.createElement("div");
     host.innerHTML = '<div data-chat-anchor-key="7:input-messageDUP-1">ABAB</div>';
@@ -3485,7 +3908,7 @@ describe("Notes behavior regression behavior regression notes view order / atten
     expect(putBodies.length).toBe(0);
   });
 
-  it("K: empty / single lane → 排序控件存在但无卡片可排；双向切换不炸、零写", async () => {
+  it("K: empty / single lane → 排序控件存在但无卡片可排；双向切换不炸、零写（P4C-3 gate）", async () => {
     // empty lane：无 item → 空态提示；select 仍渲染（非 fork-merge）但无可排内容
     const e1 = installLaneFetch({ body: "" });
     mountPanel();
@@ -3873,7 +4296,7 @@ describe("behavior regression persistent Note Pin (holder-local)", () => {
   });
 
   it("first-pin migration：无 key 旧 item 首次置顶 → 先 durable key write（PUT）成功才 pin；失败无 pin entry", async () => {
-    // 旧 item（无 item-key）
+    // 旧 item（无 item-key，如 pre-P4D 内容）
     const body = serializeItem(makeItem({ kind: "source-independent", captureOrigin: SESSION, comment: "旧便签" }));
     const { putBodies } = installLaneFetch({ body });
     mountPanel(); await openPanel();

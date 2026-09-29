@@ -49,7 +49,7 @@ async function main() {
     ok("K2: keys 都是 fresh（互异）", carryRekeyWithKeys([keyless, keyless].join("\n")).keys.length === 2);
   }
 
-  console.log("== Integration（real apply，node runtime test）==");
+  console.log("== Integration（real apply，node RUNTIME EVIDENCE）==");
   {
     const ws = await mkdtemp(join(tmpdir(), "dsh-dbind-"));
     const notesRoot = join(ws, "notes");

@@ -54,10 +54,10 @@ console.log("— fork/carry eligibility decision: carry re-key + keyless mint（
   const childKey = getItemKey(parseLaneBody(rekeyed.text).nodes[0].item);
   ok("P1 child key 存在且 != parent key（不复制）；keys 按序返回", typeof childKey === "string" && childKey !== kP && rekeyed.keys.length === 1 && rekeyed.keys[0] === childKey);
   ok("P2 parent 文本不变（re-key 不 mutate 入参）", parentText.includes(`dsh-meta item-key: ${kP}`));
-  // parent 无 key → fork/carry eligibility decision：mint fresh child-local key（不再字节原样）
+  // parent 无 key（pre-P4D）→ fork/carry eligibility decision 窄重开：mint fresh child-local key（不再字节原样）
   const keyless = serializeItem(makeItem({ kind: "source-independent", captureOrigin: SID, comment: "old" }));
   const minted = carryRekeyWithKeys(keyless);
-  ok("Source behavior：keyless → mint fresh key（非字节原样）",
+  ok("Source behavior regression pre-P4D keyless → mint fresh key（非字节原样）",
     minted.keys.length === 1 && minted.text !== keyless &&
     typeof getItemKey(parseLaneBody(minted.text).nodes[0].item) === "string");
   // multi item + legacy 混合：structured item（含 keyless）都换/mint fresh key，legacy 原样

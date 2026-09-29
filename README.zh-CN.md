@@ -146,7 +146,7 @@ Collaborative Notes 也刻意区分“已经处理”和“已经删除”。工
 
 `aprilxuMLC/dsh-collaborative-notes`
 
-公开后预期使用的 GitHub 安装命令为：
+公开仓库的 GitHub 安装命令为：
 
 ~~~sh
 dsh plugin --profile web add github:aprilxuMLC/dsh-collaborative-notes
@@ -158,9 +158,19 @@ dsh plugin --profile web add github:aprilxuMLC/dsh-collaborative-notes
 dsh web
 ~~~
 
+如果默认或全局 `dsh` 已经移动到其它版本，可使用已经验证过的顶层
+DSH 兼容固定启动方式：
+
+~~~sh
+npx @deepseek-ai/dsh@0.1.5-rc.2 web
+~~~
+
+这里固定的是顶层 DSH package；其声明的 companion dependency ranges 仍由
+该 package 解析，不把所有 companion package 声称为精确同版。
+
 安装并成功重启 profile 后，Notes 入口（`📝`）会出现在 conversation header 的工具区，Collaborative Notes Skill 也会在当前运行时注册。更新 Bundle 并重启后，这项能力会恢复。移除 Bundle 并重启后，Notes UI 入口和运行时 Skill 会消失，但 workspace Notes 数据保留；重新安装并重启后，两者恢复，并继续使用仍然有效的 workspace binding。
 
-当前 release candidate 已包含运行所需的构建产物，因此公开 GitHub 发布形态不要求用户 clone 源码后再手工 build。仓库现已发布，未经认证的 GitHub 安装以及 clean-install/runtime E2E 已完成本 release gate 的验证。
+当前 release candidate 已包含运行所需的构建产物，因此公开 GitHub 发布形态不要求用户 clone 源码后再手工 build。仓库已经公开；未经认证的 clean-install/runtime gate 仍需在候选推送后针对实际 public candidate 完成。
 
 第一次使用路径是：打开 Notes → 确认建议位置或选择其它位置 → 创建一条 Note → 可选地引用选中的文字。默认建议位置是 workspace 下的 `notes` 目录；自定义目录只有在 host 的目录选择能力接受后才会使用。一个 workspace 只有一个持久化确认的 binding。插件不会仅仅因为安装完成，就静默替用户猜测或重新绑定一个 Notes root。
 
@@ -178,12 +188,12 @@ dsh plugin --profile web remove dsh-collab-notes
 ## 当前支持范围与已知边界  
 **Current Support Boundary**
 
-当前 release candidate 已针对 **DeepSeek Harness 0.1.5-rc.2** 完成隔离 clean-install 和当前 exercised product path 的验证，但仍有明确边界：
+已接受的运行时行为针对 **DeepSeek Harness 0.1.5-rc.2**，并已在隔离 acceptance 环境中执行；public 0.1.1 candidate 仍需完成推送后的 public clean-install gate，同时存在以下边界：
 
 - Source capture 当前限于单条普通、可选择的 user 或 assistant message；
 - reasoning / Think / tool-call 暂不作为稳定 Source capture surface；
 - Source re-entry 不通过跨 message 的相似文本搜索重建 historical identity；
-- 某些很早期的 DSH conversation 可能因为 host 自身的 historical-session replay 问题暂时无法读取；
+- 当前 acceptance evidence 尚未建立 historical currently-unmaterialized Source loading；它仍是明确 qualification；
 - Source 暂时不可访问不会导致已有 provenance 被自动改写；
 - 当前验证不构成对未来 DSH 版本的无条件兼容承诺；
 - 永久删除在产品与 Agent 行为语义上需要用户授权；当前 DSH 并不对所有通用文件或外部写入路径提供 Notes-specific 的机械 enforcement。

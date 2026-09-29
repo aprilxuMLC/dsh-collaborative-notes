@@ -23,7 +23,7 @@ function makeDomain() {
   return { records, open: async (spec) => { assert.equal(spec.name, BINDING_DOMAIN_SPEC.name); return { table: () => table }; } };
 }
 
-function makeFs(root, events, observations) {
+function makeFs(root, events, observations, options = {}) {
   const versions = new Map();
   const resolveTarget = async (file) => ({ targetKey: file, displayPath: file });
   const statTarget = async (target) => {
@@ -38,7 +38,8 @@ function makeFs(root, events, observations) {
       if (!item) { const error = new Error("missing"); error.code = "ENOENT"; throw error; }
       return item.content;
     },
-    async writeText(target, content, expected) {
+    async writeText(target, content, expected, _signal, sandboxPolicy) {
+      this._sandboxPolicies.push(sandboxPolicy);
       const beforeWrite = this._beforeWrite;
       if (beforeWrite) await beforeWrite(target, content, expected);
       const current = versions.get(target.targetKey);
@@ -61,18 +62,20 @@ function makeFs(root, events, observations) {
     _versions: versions,
     _events: events,
     _observations: observations,
+    _sandboxPolicies: [],
+    sandboxMode: options.sandboxMode,
     _beforeWrite: null,
   };
 }
 
-function makeCtx(root, domain, fs, tools) {
+function makeCtx(root, domain, fs, tools, options = {}) {
   const sessions = new Map([
     [SID_A, { id: SID_A, header: { cwd: root } }],
     [SID_B, { id: SID_B, header: { cwd: root } }],
   ]);
   const workspace = { id: "workspace-workspace-binding", path: root };
   return {
-    get: (key) => key === "sessions" ? sessions : undefined,
+    get: (key) => key === "sessions" ? sessions : key === "sandboxPolicy" ? options.sandboxPolicy : undefined,
     storageDomain: domain,
     workspaceRegistry: { resolveByPath: async () => workspace },
     fs,
@@ -256,6 +259,53 @@ async function main() {
     () => editTool.execute({ lane: LANE, itemKey: writeResult.itemKey, content: "stale", expectedVersion }, execA),
     (error) => error.code === "FS_STALE_VERSION",
   );
+
+  const policyRoot = await mkdtemp(join(tmpdir(), "dsh-notes-policy-"));
+  const policyDomain = makeDomain();
+  const policyCalls = [];
+  const policyFs = makeFs(policyRoot, [], [], { sandboxMode: "workspace-write" });
+  const policy = {
+    resolve(request) {
+      policyCalls.push(request);
+      return { mode: request.session.id === SID_A ? "danger-full-access" : "workspace-write", workspaceRoot: request.session.header.cwd, sessionId: request.session.id };
+    },
+  };
+  const policyTools = [];
+  const policyCtx = makeCtx(policyRoot, policyDomain, policyFs, policyTools, { sandboxPolicy: policy });
+  const policyRuntime = createWorkspaceBindingRuntime(policyCtx, { keyGenerator: () => "ik-policy" });
+  policyRuntime.registerTools();
+  await policyRuntime.bind(SID_A, "default");
+  await mkdir(join(policyRoot, "notes", LANE), { recursive: true });
+  const policyExec = { agent: { id: SID_A, session: { id: SID_A, header: { cwd: policyRoot } } }, signal: new AbortController().signal };
+  const policyWrite = policyTools.find((definition) => definition.name === "notes-write");
+  const policyRead = policyTools.find((definition) => definition.name === "notes-read");
+  const policyEdit = policyTools.find((definition) => definition.name === "notes-edit");
+  const policyCreated = await policyWrite.execute({ lane: LANE, content: "policy A" }, policyExec);
+  const policyVersion = (await policyRead.execute({ lane: LANE }, policyExec)).version;
+  await policyEdit.execute({ lane: LANE, itemKey: policyCreated.itemKey, content: "policy B", expectedVersion: policyVersion }, policyExec);
+  assert.equal(policyCalls.length, 2);
+  assert.deepEqual(policyCalls.map(({ session }) => ({ id: session.id, cwd: session.header.cwd })), [
+    { id: SID_A, cwd: policyRoot },
+    { id: SID_A, cwd: policyRoot },
+  ]);
+  assert.deepEqual(policyFs._sandboxPolicies, [
+    { mode: "danger-full-access", workspaceRoot: policyRoot, sessionId: SID_A },
+    { mode: "danger-full-access", workspaceRoot: policyRoot, sessionId: SID_A },
+  ]);
+
+  const missingPolicyRoot = await mkdtemp(join(tmpdir(), "dsh-notes-policy-missing-"));
+  const missingPolicyFs = makeFs(missingPolicyRoot, [], [], { sandboxMode: "workspace-write" });
+  const missingPolicyTools = [];
+  const missingPolicyRuntime = createWorkspaceBindingRuntime(makeCtx(missingPolicyRoot, makeDomain(), missingPolicyFs, missingPolicyTools));
+  missingPolicyRuntime.registerTools();
+  await missingPolicyRuntime.bind(SID_A, "default");
+  await mkdir(join(missingPolicyRoot, "notes", LANE), { recursive: true });
+  await assert.rejects(
+    () => missingPolicyTools.find((definition) => definition.name === "notes-write").execute({ lane: LANE, content: "must not write" }, { agent: { id: SID_A, session: { id: SID_A, header: { cwd: missingPolicyRoot } } }, signal: new AbortController().signal }),
+    (error) => error.code === "FS_SANDBOX_POLICY_UNAVAILABLE",
+  );
+  assert.equal(missingPolicyFs._versions.size, 0);
+
   const sourceItem = withItemKey(makeItem({ kind: KIND_SOURCE_AWARE, captureOrigin: SID_A, snapshot: "SNAPSHOT", comment: "source authored", sourcePayload: { projectionVersion: 2, sessionId: SID_A, segments: [{ eventSeq: 1, start: 0, end: 8 }] } }), "ik-source");
   fs._versions.set(currentFile, { version: String(Number(afterEdit.version) + 1), content: [fs._versions.get(currentFile).content, serializeItem(sourceItem)].join("\n\n") });
   const sourceRead = await readTool.execute({ lane: LANE }, execA);
@@ -420,8 +470,11 @@ async function main() {
   assert.deepEqual(outputSchema.carriedFromSession, { type: "string" });
 
   await projectionRuntime.close?.();
+  await policyRuntime.close?.();
   await rm(occupiedRoot, { recursive: true, force: true });
   await rm(legacyRoot, { recursive: true, force: true });
+  await rm(missingPolicyRoot, { recursive: true, force: true });
+  await rm(policyRoot, { recursive: true, force: true });
   await rm(root, { recursive: true, force: true });
   console.log("workspace binding focused tests: PASS");
 }

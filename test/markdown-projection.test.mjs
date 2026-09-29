@@ -146,12 +146,19 @@ console.log("— M7: source map 一致性（visible ↔ 源）—");
 console.log("— M8: 不支持的构造（local unsupported，truthful reject）—");
 {
   // This path does not prove a universal renderer treatment for non-text blocks;
-  // this local projection rejects them rather than treating them as hidden.
+  // this local projection rejects unclassified blocks rather than treating them as hidden.
   ok("非 text block v2 → UNSUPPORTED_CONTENT_BLOCK", (() => { try { projectVisibleText([{ type: "tool" }], PROJECTION_VERSION_MARKDOWN); return false; } catch (e) { return e.code === "UNSUPPORTED_CONTENT_BLOCK"; } })());
   ok("mixed content v2 → UNSUPPORTED_CONTENT_BLOCK", (() => { try { projectVisibleText([{ type: "tool" }, { type: "text", text: "正文" }], PROJECTION_VERSION_MARKDOWN); return false; } catch (e) { return e.code === "UNSUPPORTED_CONTENT_BLOCK"; } })());
   const reasoningMixed = [{ type: "reasoning", text: "内部 reasoning，不是正文" }, { type: "text", text: "正文 **加粗**" }];
   const reasoningProjection = projectVisibleText(reasoningMixed, PROJECTION_VERSION_MARKDOWN);
   ok("DSH rc.2 reasoning + text → 只投影 visible text", reasoningProjection === "正文 加粗", JSON.stringify(reasoningProjection));
+  const mixedRendererOnly = [
+    { type: "reasoning", text: "内部 reasoning，不是正文" },
+    { type: "text", text: "正文 **加粗**" },
+    { type: "tool-call", callId: "cc-1", text: "不属于正文" },
+  ];
+  const mixedProjection = projectVisibleText(mixedRendererOnly, PROJECTION_VERSION_MARKDOWN);
+  ok("DSH rc.2 reasoning + text + tool-call → 只投影正文", mixedProjection === "正文 加粗", JSON.stringify(mixedProjection));
   const reasoningOffsetMap = projectVisibleMarkdownContent([{ type: "reasoning", text: "abc" }, { type: "text", text: "XY" }]);
   ok("reasoning omission 不移动 accepted visible projection 坐标", reasoningOffsetMap.text === "XY" && JSON.stringify(reasoningOffsetMap.sourceOffsets) === JSON.stringify([0, 1]), JSON.stringify(reasoningOffsetMap));
 }

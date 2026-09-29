@@ -4,14 +4,14 @@
 
 ## 目标版本与安装形态
 
-当前 release candidate 针对 **DeepSeek Harness `0.1.5-rc.2`** 验证。预期公开仓库为 `aprilxuMLC/dsh-collaborative-notes`，发布本身是单独的 release gate，目前尚未公开。公开后预期使用：
+已接受的运行时行为针对 **DeepSeek Harness `0.1.5-rc.2`**。公开仓库为 `aprilxuMLC/dsh-collaborative-notes`；当前本地 0.1.1 candidate 仍需完成最终 public-repository gate。安装形态为：
 
 ```sh
 dsh plugin --profile web add github:aprilxuMLC/dsh-collaborative-notes
 dsh web
 ```
 
-Package 已包含运行所需的构建产物和唯一的 Skill template source。在 DSH `0.1.5-rc.2` apply 时，插件通过 host runtime registry 注册渲染后的 Skill，不创建 user-root Skill 文件。由于候选尚未公开，不能声称未经认证的 GitHub 安装已经验证；正式发布仍必须从全新 public repository 完成 clean-install 与 runtime E2E。
+Package 已包含运行所需的构建产物和唯一的 Skill template source。在 DSH `0.1.5-rc.2` apply 时，插件通过 host runtime registry 注册渲染后的 Skill，不创建 user-root Skill 文件。当前 candidate 尚未推送，因此不能声称未经认证的 public GitHub 安装已经验证；正式发布仍必须从全新 public repository 完成 clean-install 与 runtime E2E。
 
 安装并成功重启 profile 后，Notes 入口（`📝`）会出现在 conversation header 的工具区，Collaborative Notes Skill 也会在当前运行时注册。更新 Bundle 并重启后，这项能力会恢复。移除 Bundle 并重启后，Notes UI 入口和运行时 Skill 会消失，但 workspace Notes 数据保留；重新安装并重启后，两者恢复，并继续使用仍然有效的 workspace binding。
 
@@ -29,7 +29,7 @@ Package 已包含运行所需的构建产物和唯一的 Skill template source�
 
 当前 DSH profile 支持同一条普通可选择的 user 或 assistant message，并要求一个 authoritative message identity。跨不同消息的 selection 必须 fail closed，不能静默选一条，也不能伪造无来源 Note。
 
-已接受的 Source 会把 authored Note content、selected snapshot 和 durable Source relationship 分开保存。回来源先确认记录的消息，再只在该消息内查找保存文本；不会跨 message 搜索后重新绑定。能机械得到精确 span 时优先精确高亮；否则可以使用明确标注的 broader message-level cue。
+已接受的 Source 会把 authored Note content、selected snapshot 和 durable Source relationship 分开保存。capture 与 re-entry 使用同一套 selected-visible-text 语义，包括 renderer 提供的结构性分隔符。Native `Range.toString()` 只是暂时的 cue 机制，不是普适的 source truth 要求。回来源先确认记录的消息，再只在该消息内查找保存文本；不会跨 message 搜索后重新绑定。当前有多个 exact match 时可以产生多个 transient Range；零个 match 不会触发猜测式 rebind 或改写 S。能机械得到精确 span 时优先精确高亮；否则才可以使用明确标注的 broader message-level cue，而且成功的 exact return 要求实际 cue 有正几何并与 viewport 相交。
 
 ## 当前会话引用与历史读取
 
@@ -44,8 +44,9 @@ Package 已包含运行所需的构建产物和唯一的 Skill template source�
 - reasoning、Think、tool-call surface 不作为稳定 selected-text capture surface 宣称；
 - 当前 DSH profile 不声称支持多消息/多事件 selected capture；Core 的 ordered-loci 语义仍保留给其他 host/profile；
 - Source re-entry 不使用相似匹配或推断式历史 rebind；
-- 很早的 host session 与超大 cold/non-attached read 仍有 host-specific 可读性、deadline 或内存资格边界；
+- 当前 acceptance evidence 尚未建立 historical currently-unmaterialized Source loading；它仍是明确 qualification；
 - exact renderer span 不是普适保证，较宽提示必须如实标注；
+- 相关 DSH turn-process reveal 只是临时 host presentation 行为；Collaborative Notes 不持久化 host collapse state；
 - 删除需要用户授权，host 也不对所有通用外部 writer 提供 Notes-specific mechanical enforcement。
 
 ## 开发与可复现验证
@@ -54,7 +55,7 @@ Package 已包含运行所需的构建产物和唯一的 Skill template source�
 
 ## 更新与卸载
 
-公开发布后，update / uninstall 使用 package name：
+package name 的 update / uninstall 使用：
 
 ```sh
 dsh plugin --profile web update dsh-collab-notes

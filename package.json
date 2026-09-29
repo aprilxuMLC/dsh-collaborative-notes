@@ -1,6 +1,6 @@
 {
   "name": "dsh-collab-notes",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared attention workspace for DeepSeek Harness: transient collaborative Notes with provenance, source re-entry, and controlled reactivation",
   "repository": {
     "type": "git",
@@ -48,6 +48,7 @@
     "skill",
     "README.md",
     "README.zh-CN.md",
+    "CHANGELOG.md",
     "LICENSE"
   ]
 }

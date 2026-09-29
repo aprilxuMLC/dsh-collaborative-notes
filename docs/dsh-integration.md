@@ -4,14 +4,21 @@ This is the public, current integration reference for `dsh-collab-notes`.
 
 ## Target and install model
 
-The current release candidate is validated against **DeepSeek Harness `0.1.5-rc.2`**. The intended public repository is `aprilxuMLC/dsh-collaborative-notes`; publication is a separate release gate. Once that repository is public, the intended install shape is:
+The accepted runtime behavior targets **DeepSeek Harness `0.1.5-rc.2`**. The
+public repository is `aprilxuMLC/dsh-collaborative-notes`; this local 0.1.1
+candidate still requires the final public-repository gate. The install shape is:
 
 ```sh
 dsh plugin --profile web add github:aprilxuMLC/dsh-collaborative-notes
 dsh web
 ```
 
-The package includes the built runtime artifacts and the single Skill template source needed by the plugin. During apply on DSH `0.1.5-rc.2`, the plugin registers the rendered Skill through the host runtime registry; it does not create a user-root Skill file. Because the repository is not published by this candidate, an unauthenticated GitHub install is not claimed as verified. A public release still requires a fresh repository clean-install and runtime E2E.
+The package includes the built runtime artifacts and the single Skill template
+source needed by the plugin. During apply on DSH `0.1.5-rc.2`, the plugin
+registers the rendered Skill through the host runtime registry; it does not
+create a user-root Skill file. This local candidate has not yet been pushed,
+so an unauthenticated public install is not claimed as verified. A public
+release still requires a fresh repository clean-install and runtime E2E.
 
 After a successful install and profile restart, the Notes entry (`📝`) is available in the conversation-header utilities area while the Collaborative Notes Skill is registered in the active runtime. Updating the Bundle and restarting returns the same capability. Removing the Bundle and restarting removes the Notes UI entry and runtime Skill while preserving workspace Notes data; reinstalling and restarting restores them and reuses a still-valid workspace binding.
 
@@ -29,7 +36,7 @@ The public product surface is organized around four semantic lanes: `conversatio
 
 The current DSH selected-text profile supports one ordinary selectable/readable user or assistant message with one authoritative message identity. A selection spanning distinct messages must fail closed; no message is silently chosen and no source-independent Note is fabricated.
 
-For an accepted Source, the plugin keeps the authored Note content separate from the accepted selected snapshot and durable Source relationship. Return-to-source establishes the recorded message first, then looks for the stored text inside that message only. It never searches other messages to rebind Source. Exact current highlighting is preferred when mechanically available; a truthful broader message-level cue is allowed when the exact span cannot be reconstructed.
+For an accepted Source, the plugin keeps the authored Note content separate from the accepted selected snapshot and durable Source relationship. Capture and re-entry use the same selected-visible-text semantics, including structural separators supplied by the renderer. Native `Range.toString()` is a transient cue mechanism, not a universal source-truth requirement. Return-to-source establishes the recorded message first, then looks for the stored text inside that message only. It never searches other messages to rebind Source. Exact current highlighting is preferred when mechanically available; duplicate current matches may produce multiple transient ranges, while zero matches do not trigger guessed rebind or rewrite. A truthful broader message-level cue is allowed only when the exact span cannot be reconstructed, and successful exact return requires the actual cue to have positive geometry and intersect the viewport.
 
 ## Current-turn references and historical reads
 
@@ -44,8 +51,9 @@ The host-supported ordinary fork path permits an explicit carry-all, carry-some,
 - Reasoning, Think, and tool-call surfaces are not advertised as stable selected-text capture surfaces.
 - The current DSH profile does not claim multi-message/multi-event selected capture; Core ordered-loci semantics remain available to other hosts/profiles.
 - Source re-entry never uses similarity matching or inferred historical rebind.
-- Some very old host sessions and very-large cold/non-attached reads retain host-specific readability, deadline, or memory qualifications.
+- Historical currently-unmaterialized Source loading has not been established by the present acceptance evidence and remains an explicit qualification.
 - Exact renderer-span reconstruction is not a blanket guarantee; broader cues must be labeled truthfully.
+- Relevant DSH turn-process reveal is transient host presentation behavior; host collapse state is not persisted by Collaborative Notes.
 - Deletion requires user authority, and the host does not provide Notes-specific mechanical enforcement across every generic external writer path.
 
 ## Development and reproducible verification
@@ -54,7 +62,7 @@ The authored client source is `src/client.js`; `npm run bundle` produces the run
 
 ## Update and uninstall
 
-After a public release, the package-name operations are:
+The package-name operations are:
 
 ```sh
 dsh plugin --profile web update dsh-collab-notes

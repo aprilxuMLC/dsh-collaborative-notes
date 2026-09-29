@@ -134,7 +134,7 @@ Requirements:
 
 `aprilxuMLC/dsh-collaborative-notes`
 
-After that repository is published, the intended GitHub install command is:
+The public repository is available at:
 
 ~~~sh
 dsh plugin --profile web add github:aprilxuMLC/dsh-collaborative-notes
@@ -146,9 +146,24 @@ Then start or restart the Web profile:
 dsh web
 ~~~
 
+For the validated top-level DSH release, use the compatibility-pinned start
+form when the default/global `dsh` may have moved:
+
+~~~sh
+npx @deepseek-ai/dsh@0.1.5-rc.2 web
+~~~
+
+This pins the top-level DSH package only. Its declared companion dependency
+ranges are resolved by that package and are not asserted here as a blanket
+claim that every companion package has the same exact version.
+
 After a successful install and profile restart, the Notes entry (`📝`) is available in the conversation-header utilities area while the Collaborative Notes Skill is registered in the active runtime. Updating the Bundle and restarting returns the same capability. Removing the Bundle and restarting removes the Notes UI entry and runtime Skill while preserving workspace Notes data; reinstalling and restarting restores them and reuses a still-valid workspace binding.
 
-The release candidate includes the built artifacts required at runtime, so the public GitHub release path does not require users to clone the source and build it manually. The repository is now published, and the unauthenticated GitHub install plus clean-install/runtime E2E have been validated for this release gate.
+The release candidate includes the built artifacts required at runtime, so the
+public GitHub release path does not require users to clone the source and build
+it manually. The repository is public; the final unauthenticated
+clean-install/runtime gate is checked against the actual public candidate
+after it is pushed.
 
 First use is: open Notes → confirm the suggested location or choose another location → create a Note → optionally capture selected text. The default suggestion is the workspace's `notes` directory; a custom directory is used only after the host directory-selection capability accepts it. A workspace has one durable confirmed binding. Installing the plugin alone does not silently guess or rebind a Notes root.
 
@@ -165,12 +180,15 @@ After adding, updating, or removing a Bundle, restart the corresponding profile.
 
 ## Current Support Boundary
 
-The current release candidate has been validated against **DeepSeek Harness 0.1.5-rc.2** through isolated clean installation and the currently exercised product path, with explicit boundaries:
+The accepted runtime behavior targets **DeepSeek Harness 0.1.5-rc.2** and has
+been exercised in the isolated acceptance environment. The public 0.1.1
+candidate still requires its post-push public clean-install gate, with explicit
+boundaries:
 
 - Source capture is currently limited to one ordinary selectable user or assistant message;
 - reasoning / Think / tool-call surfaces are not currently treated as stable Source-capture surfaces;
 - Source re-entry does not reconstruct historical identity by similarity-searching across messages;
-- some very old DSH conversations may be temporarily unreadable because of host historical-session replay behavior;
+- historical currently-unmaterialized Source loading has not been established by the present acceptance evidence and remains an explicit qualification;
 - temporary Source unavailability does not automatically rewrite existing provenance;
 - current validation is not a blanket compatibility promise for future DSH versions;
 - permanent deletion requires user authority at the product and agent-behavior level; the current DSH host does not provide Notes-specific mechanical enforcement across every generic file or external-writer path.
@@ -192,7 +210,14 @@ If you only want to use the plugin, the first three sections are enough. For the
 
 The public repository keeps current product-facing and implementation-facing documents. Internal research, probes, deployment evidence, and design-process history are maintained separately from this release surface.
 
-The public repository will contain the corresponding source and the built artifacts required by the current release. Reproduce the public candidate checks with `npm run verify:public`; this runs the supported build, bundle contract, client tests, and Skill materialization validation. The isolated DSH `0.1.5-rc.2` runtime checks additionally cover the real `/api/notes-api` carrier, four-lane read/write, first-use workspace setup, save → readback, and workspace-binding retention after restart. These checks do not replace the later public-repository clean-install gate.
+This candidate contains the corresponding source and built artifacts required by
+the current release. Reproduce the candidate checks with
+`npm run verify:public`; this runs the supported build, bundle contract, client
+tests, and Skill materialization validation. The isolated DSH `0.1.5-rc.2`
+runtime checks additionally cover the real `/api/notes-api` carrier,
+four-lane read/write, first-use workspace setup, save → readback, and
+workspace-binding retention after restart. These checks do not replace the
+later public-repository clean-install gate.
 
 The final public release gate remains fresh unauthenticated browse / clone / download / clean-install / runtime E2E from the public repository itself.
 

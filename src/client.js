@@ -52,6 +52,7 @@ import {
 import { chooseNotesDirectory } from "../lib/notes-picker.js";
 import { LOCALE_NS, en, zh } from "./locales.js";
 import { notesFetch } from "../lib/notes-transport.js";
+import { selectedVisibleTextIndex } from "../lib/selection-bridge.js";
 
 (() => {
 
@@ -264,29 +265,9 @@ function anchorElementsFor(hint) {
  * 前缀不一致/越界/跨节点失败 → null（truthful downgrade）。
  */
 function rangeAtProjectionOffsets(el, projection, cpStart, cpEnd) {
-  // DSH rc.2 runtime seam: reasoning is rendered as a separate Think surface
-  // marked by data-variant="think". Keep re-entry coordinates consistent with
-  // capture's observed renderer shape; this is not a universal non-text rule.
-  const reasoningSurfaces = [...el.querySelectorAll('[data-variant="think"]')]
-    .filter((surface) => surface.closest("[data-chat-anchor-key]") === el);
-  const isReasoningNode = (node) => reasoningSurfaces.some((surface) => surface.contains(node));
-  const indexed = [];
-  const appendSubtree = (parent) => {
-    let previousWasListItem = false;
-    for (const child of parent.childNodes || []) {
-      if (isReasoningNode(child)) continue;
-      const isElement = child.nodeType === 1;
-      const isListItem = isElement && child.tagName === "LI";
-      // Markdown v2 has a newline between adjacent list items, but the DOM
-      // has no text node for it. Keep it as a virtual coordinate only.
-      if (previousWasListItem && isListItem) indexed.push({ virtual: true, length: 1 });
-      if (child.nodeType === 3) indexed.push({ node: child, length: [...child.data].length });
-      else if (isElement) appendSubtree(child);
-      previousWasListItem = isListItem;
-    }
-  };
-  appendSubtree(el);
-  const basisCps = indexed.flatMap((part) => part.virtual ? ["\n"] : [...part.node.data]);
+  const semantic = selectedVisibleTextIndex(el, document);
+  const indexed = semantic.parts;
+  const basisCps = [...semantic.text];
   if (cpEnd > basisCps.length) return null;
   if (basisCps.slice(0, cpEnd).join("") !== [...projection].slice(0, cpEnd).join("")) return null;
   const boundary = (cp, isStart) => {
@@ -303,8 +284,8 @@ function rangeAtProjectionOffsets(el, projection, cpStart, cpEnd) {
       }
       if (cp === next && !isStart) {
         if (part.virtual) {
-          const following = indexed.slice(i + 1).find((candidate) => !candidate.virtual);
-          return following ? { node: following.node, offset: 0 } : null;
+          const previous = [...indexed].slice(0, i).reverse().find((candidate) => !candidate.virtual);
+          return previous ? { node: previous.node, offset: previous.node.data.length } : null;
         }
         return { node: part.node, offset: cpIndexToUtf16(part.node.data, part.length) };
       }
@@ -319,6 +300,60 @@ function rangeAtProjectionOffsets(el, projection, cpStart, cpEnd) {
   range.setStart(start.node, start.offset);
   range.setEnd(end.node, end.offset);
   return range;
+}
+
+function messageLocalRanges(el, selectedText) {
+  if (typeof selectedText !== "string" || selectedText.length === 0) return [];
+  const semantic = selectedVisibleTextIndex(el, document, {
+    skipSubtree: (node) => {
+      const element = node?.nodeType === 1 ? node : node?.parentElement;
+      return !!element?.closest?.('button,[role="button"]');
+    },
+  });
+  const nodes = semantic.parts.filter((part) => part.node).map((part) => part.node);
+  if (nodes.length === 0) return [];
+  const pieces = [];
+  let logicalText = "";
+  for (const part of semantic.parts) {
+    const text = part.virtual ? "\n" : part.node.data;
+    const start = logicalText.length;
+    logicalText += text;
+    pieces.push({ kind: part.virtual ? "separator" : "text", node: part.node, start, end: logicalText.length });
+  }
+
+  const boundary = (offset, isStart) => {
+    for (const piece of pieces) {
+      if (piece.kind === "separator") {
+        if (offset >= piece.start && offset <= piece.end) {
+          const pieceIndex = pieces.indexOf(piece);
+          const next = pieces.slice(pieceIndex + 1).find((candidate) => candidate.kind === "text");
+          const previous = [...pieces].reverse().find((candidate) => candidate.kind === "text" && candidate.end <= piece.start);
+          if (isStart) return next ? { node: next.node, offset: 0 } : null;
+          return previous ? { node: previous.node, offset: previous.node.data.length } : null;
+        }
+        continue;
+      }
+      if (offset < piece.start || offset > piece.end) continue;
+      if (offset === piece.end && isStart) continue;
+      return { node: piece.node, offset: offset - piece.start };
+    }
+    return null;
+  };
+
+  const ranges = [];
+  for (let start = logicalText.indexOf(selectedText); start >= 0; start = logicalText.indexOf(selectedText, start + 1)) {
+    const rangeStart = boundary(start, true);
+    const rangeEnd = boundary(start + selectedText.length, false);
+    if (!rangeStart || !rangeEnd) continue;
+    const range = document.createRange();
+    range.setStart(rangeStart.node, rangeStart.offset);
+    range.setEnd(rangeEnd.node, rangeEnd.offset);
+    // Exactness is the shared selected-visible-text semantic match above.
+    // Native Range text is only the transient visual mechanism and may omit
+    // structural separators that Selection/capture semantics include.
+    ranges.push(range);
+  }
+  return ranges;
 }
 
 /**
@@ -401,6 +436,138 @@ function applyWholeMessageCue(el) {
   wholeMessageCueRecords.push({ el, original, applied });
   return true;
 }
+
+// Return-to-source presentation is intentionally a small, transient DOM
+// operation.  The host exposes no plugin-facing expansion API, so use only the
+// rendered user-facing controls and stable rc.2 relation attributes. Nothing
+// here records collapse state or expands unrelated groups.
+function collapsedGroupControlsFor(target) {
+  const controls = [];
+  let current = target;
+  while (current && current !== document.body) {
+    if (current.matches?.("details:not([open])")) {
+      const summary = current.querySelector?.("summary");
+      if (summary) controls.push(summary);
+    } else if (current.getAttribute?.("aria-expanded") === "false") {
+      if (current.matches?.("button,[role=\"button\"],summary")) {
+        controls.push(current);
+      } else {
+        const nested = [...(current.children || [])].find((child) =>
+          child.matches?.("button[aria-expanded=\"false\"],[role=\"button\"][aria-expanded=\"false\"],summary")
+        );
+        if (nested) controls.push(nested);
+      }
+    }
+    current = current.parentElement;
+  }
+  return controls;
+}
+
+function turnProcessMemberFor(target) {
+  let current = target;
+  while (current && current !== document.body) {
+    if (current.getAttribute?.("data-turn-process-member") === "true") return current;
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function turnProcessControlFor(target) {
+  const member = turnProcessMemberFor(target);
+  const turn = member?.getAttribute?.("data-chat-turn");
+  const flow = member?.closest?.("[data-chat-flow]");
+  if (!member || !turn || !flow) return null;
+  const controls = [...flow.querySelectorAll("button[data-turn-process]")]
+    .filter((control) => control.getAttribute("data-turn-process") === turn)
+    .filter((control) => control.closest?.("[data-chat-flow]") === flow);
+  if (controls.length !== 1) return null;
+  const control = controls[0];
+  return control.getAttribute("aria-expanded") === "false" ? control : null;
+}
+
+function presentationControlsFor(target) {
+  const controls = [...collapsedGroupControlsFor(target)];
+  const turnControl = turnProcessControlFor(target);
+  if (turnControl) controls.push(turnControl);
+  return controls;
+}
+
+function controlIsExpanded(control) {
+  if (control.getAttribute?.("aria-expanded") === "true") return true;
+  const details = control.closest?.("details");
+  return Boolean(details?.open);
+}
+
+function targetHasCollapsedAttributes(target) {
+  return target?.hasAttribute?.("hidden")
+    || target?.getAttribute?.("data-turn-process-hidden") === "true";
+}
+
+async function revealContainingGroups(elements) {
+  const clicked = new Set();
+  const pending = [];
+  for (const el of elements) {
+    for (const control of presentationControlsFor(el)) {
+      if (clicked.has(control) || typeof control.click !== "function") continue;
+      clicked.add(control);
+      const target = turnProcessMemberFor(el) || el;
+      try {
+        control.click();
+        pending.push({ control, target });
+      } catch { /* presentation remains unconfirmed */ }
+    }
+  }
+  if (pending.length === 0) return true;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (pending.every(({ control, target }) =>
+      controlIsExpanded(control) && !targetHasCollapsedAttributes(target))) return true;
+    if (attempt < 2) await nextPresentationFrame();
+  }
+  return pending.every(({ control, target }) =>
+    controlIsExpanded(control) && !targetHasCollapsedAttributes(target));
+}
+
+function elementIntersectsActiveViewport(el) {
+  if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  const rect = el.getBoundingClientRect();
+  const root = document.documentElement;
+  const width = Number(window.innerWidth || root?.clientWidth || 0);
+  const height = Number(window.innerHeight || root?.clientHeight || 0);
+  if (!(width > 0 && height > 0)) return false;
+  const renderedWidth = Number(rect.width ?? (rect.right - rect.left));
+  const renderedHeight = Number(rect.height ?? (rect.bottom - rect.top));
+  if (!(renderedWidth > 0 && renderedHeight > 0)) return false;
+  return rect.right > 0 && rect.bottom > 0 && rect.left < width && rect.top < height;
+}
+
+function nextPresentationFrame() {
+  return new Promise((resolve) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+async function presentCueElements(elements) {
+  const uniqueEls = [...new Set(elements.filter(Boolean))];
+  if (uniqueEls.length === 0) return false;
+  if (!await revealContainingGroups(uniqueEls)) return false;
+  for (const el of uniqueEls) {
+    try { el.scrollIntoView?.({ block: "center" }); } catch { /* verify below */ }
+  }
+  // A host click may synchronously or one render frame later reveal the target.
+  // Keep this bounded; presentation succeeds only after the final target is
+  // mechanically observable in the active viewport.
+  const finalEl = uniqueEls[uniqueEls.length - 1];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (elementIntersectsActiveViewport(finalEl)) return true;
+    if (attempt < 2) await nextPresentationFrame();
+  }
+  return false;
+}
+
 function clearWholeMessageCues() {
   for (const record of wholeMessageCueRecords.splice(0)) {
     const { el, original, applied } = record;
@@ -462,45 +629,62 @@ function wrapRangeTextNodes(range) {
   }
   return marks;
 }
-function locateAndHighlight(exact) {
+async function locateAndHighlight(exact) {
   // 单活动高亮：每次回来源先还原清理上一次的 dsh mark（避免多次 ↪ 累积；
   // 误加副作用，非原始设计——编辑行为保持局部）。
   try { removeDshMarks(); } catch { /* 清理尽力而为 */ }
   const gen = ++hlEpochRef;
+  const messageIdentityPath = typeof exact?.messageId === "string";
   const projBySeq = {};
   for (const ev of exact?.events || []) projBySeq[ev.eventSeq] = ev.projection;
   const segments = exact?.perSegment || [];
   const jobs = [];
   const wholeMessageEls = [];
-  for (const seg of segments) {
+  segments.forEach((seg, segmentIndex) => {
     const els = anchorElementsFor(seg.hint || {});
-    // New durable Sources identify the exact message but intentionally carry
-    // no durable character offsets.  A message-level outline is the truthful
-    // attention cue; it must never be presented as an exact span.
+    if (messageIdentityPath) {
+      if (els.length === 0) return;
+      const ranges = messageLocalRanges(els[0], typeof seg.text === "string" ? seg.text : exact.text);
+      if (ranges.length === 0) {
+        wholeMessageEls.push(els[0]);
+        return;
+      }
+      for (const range of ranges) jobs.push({ el: els[0], range, seg, segmentIndex });
+      return;
+    }
+    // Legacy degraded cues carry no exact span.  A message-level outline is
+    // truthful broader attention feedback; it must never be presented as exact.
     if (seg.exactSpan === false) {
       if (els.length > 0) wholeMessageEls.push(els[0]);
-      continue;
+      return;
     }
     const projection = projBySeq[seg.eventSeq];
-    if (els.length === 0) continue;
+    if (els.length === 0) return;
     if (!projection) {
       wholeMessageEls.push(els[0]);
-      continue;
+      return;
     }
     const range = rangeAtProjectionOffsets(els[0], projection, seg.start, seg.end);
     if (!range) {
       wholeMessageEls.push(els[0]);
-      continue;
+      return;
     }
-    jobs.push({ el: els[0], range, seg });
-  }
+    jobs.push({ el: els[0], range, seg, segmentIndex });
+  });
   const total = segments.length;
   const marked = [];
+  const exactCueEls = [];
+  const wrappedSegments = new Set();
   // 反向 apply：同一元素多处 segment 时先插后面的，避免偏移漂移
   for (let i = jobs.length - 1; i >= 0; i--) {
     const { range } = jobs[i];
     try {
-      if (wrapRangeTextNodes(range).length > 0) marked.push(jobs[i].seg);
+      const marks = wrapRangeTextNodes(range);
+      if (marks.length > 0) {
+        marked.push(jobs[i].seg);
+        exactCueEls.push(...marks);
+        wrappedSegments.add(jobs[i].segmentIndex);
+      }
       else wholeMessageEls.push(jobs[i].el);
     } catch {
       // The source message is still known even if renderer operations throw;
@@ -510,21 +694,17 @@ function locateAndHighlight(exact) {
     }
   }
   const wholeMessageCount = [...new Set(wholeMessageEls)].filter(applyWholeMessageCue).length;
-  // 导航 = scrollIntoView；exact span uses marks, while Row 11 fallback uses
-  // a reversible message-level outline explicitly reported as broader/non-exact.
-  // A message-wide outline is never presented as an exact selection。
-  // 高亮；exact <mark> span 本身仍只表达 exact span。当前容器级 outline 仅用于
-  // Row 11 的明确 broader/non-exact fallback，不冒充 exact extent。
-  const seenEls = new Set();
-  for (const { el } of [...jobs, ...wholeMessageEls.map((el) => ({ el }))]) {
-    if (seenEls.has(el)) continue;
-    seenEls.add(el);
-    el.scrollIntoView({ block: "center" });
-  }
+  // Exact marks and the explicit Row 11 broader cue share the same bounded
+  // presentation step.  A mark/outline offscreen is not a successful return.
+  const presentationElements = [
+    ...exactCueEls,
+    ...wholeMessageEls,
+  ];
+  const presented = await presentCueElements(presentationElements);
   const count = marked.length;
   // Transient highlight：成功后自然消失；timer 带
   // generation 校验，旧代 timer 绝不清新 highlight（防 rapid repeat race）。
-  if (count > 0 || wholeMessageCount > 0) {
+  if (presented && (count > 0 || wholeMessageCount > 0)) {
     cancelHighlightTimer();
     hlClearTimer = setTimeout(() => {
       hlClearTimer = null;
@@ -532,15 +712,23 @@ function locateAndHighlight(exact) {
         try { removeDshMarks(); } catch { /* 清理尽力而为 */ }
       }
     }, highlightClearMs());
+  } else if (!presented && (count > 0 || wholeMessageCount > 0)) {
+    // Do not spend the normal cue lifetime on a cue that failed presentation.
+    try { removeDshMarks(); } catch { /* failure status is reported by caller */ }
   }
   return {
-    highlighted: count > 0 && count === total,
-    partial: count > 0 && count < total,
+    highlighted: messageIdentityPath
+      ? wrappedSegments.size === total && wholeMessageCount === 0
+      : count > 0 && count === total,
+    partial: messageIdentityPath
+      ? wrappedSegments.size > 0 && wrappedSegments.size < total
+      : count > 0 && count < total,
     wholeMessage: wholeMessageCount > 0,
-    highlightedCount: count,
+    presented,
+    highlightedCount: messageIdentityPath ? wrappedSegments.size : count,
     wholeMessageCount,
     total,
-    detail: `${count}/${total} segments highlighted`,
+    detail: `${messageIdentityPath ? wrappedSegments.size : count}/${total} segments highlighted${messageIdentityPath && count !== wrappedSegments.size ? ` (${count} ranges)` : ""}`,
   };
 }
 
@@ -549,7 +737,7 @@ function locateAndHighlight(exact) {
 // S.  Apply the existing whole-message cue directly from authoritative render
 // hints.  Never pass the degraded payload through locateAndHighlight(), since
 // doing so could wrap a current range and make it look exact.
-function locateAndApplyWholeMessageCue(cue) {
+async function locateAndApplyWholeMessageCue(cue) {
   try { removeDshMarks(); } catch { /* 清理尽力而为 */ }
   const gen = ++hlEpochRef;
   const els = [];
@@ -559,8 +747,8 @@ function locateAndApplyWholeMessageCue(cue) {
   }
   const uniqueEls = [...new Set(els)];
   const wholeMessageCount = uniqueEls.filter(applyWholeMessageCue).length;
-  for (const el of uniqueEls) el.scrollIntoView({ block: "center" });
-  if (wholeMessageCount > 0) {
+  const presented = await presentCueElements(uniqueEls);
+  if (presented && wholeMessageCount > 0) {
     cancelHighlightTimer();
     hlClearTimer = setTimeout(() => {
       hlClearTimer = null;
@@ -568,11 +756,14 @@ function locateAndApplyWholeMessageCue(cue) {
         try { removeDshMarks(); } catch { /* 清理尽力而为 */ }
       }
     }, highlightClearMs());
+  } else if (!presented && wholeMessageCount > 0) {
+    try { removeDshMarks(); } catch { /* failure status is reported by caller */ }
   }
   return {
     highlighted: false,
     partial: false,
     wholeMessage: wholeMessageCount > 0,
+    presented,
     highlightedCount: 0,
     wholeMessageCount,
     total: (cue?.perSegment || []).length,
@@ -878,7 +1069,7 @@ function NotesController(React, clientCtx = {}) {
     // 到成功——UI 进入可用态时 host pending 要么已被采纳显示、要么已被清空，绝不出现
     // "UI 0 选中 + 隐藏 stale pending 会静默 bind"。
     useEffect(() => {
-      // Session isolation：session 切换立即清空 selection UI 态 + 标未 hydration
+      // independent validation Notes behavior：session 切换立即清空 selection UI 态 + 标未 hydration
       // （旧 session 的 tray/preview/error/勾选绝不残留到新 session；refs 在下方
       // 同步重置）。真正的隔离由 NotesToggle 以 key={sessionId} remount 保证；本
       // effect 是第二道防线（prop 直改/未 remount 路径）。
@@ -967,7 +1158,7 @@ function NotesController(React, clientCtx = {}) {
     const pumpSel = async () => {
       if (selSyncingRef.current) return;
       selSyncingRef.current = true;
-      // Epoch + session guard——session 切换后旧 session 的
+      // independent validation Notes behavior：epoch + session guard——session 切换后旧 session 的
       // 在途 PUT 不得继续写新 session 状态。
       const epoch = selSeqRef.current;
       const mySid = sessionIdRef.current;
@@ -1042,7 +1233,7 @@ function NotesController(React, clientCtx = {}) {
       let cancelled = false;
       const tick = async () => {
         if (cancelled || !aliveRef.current) return;
-        // Epoch + session guard（在途 tick 不得写新 session）
+        // independent validation Notes behavior：epoch + session guard（在途 tick 不得写新 session）
         const epoch = selSeqRef.current;
         const mySid = sessionIdRef.current;
         if (selSyncingRef.current || selPendingRef.current !== null) return; // 本地同步中不消费
@@ -2059,7 +2250,7 @@ function NotesController(React, clientCtx = {}) {
           const kind = json.status === "unauthorized" ? "unauthorized" : json.status === "unavailable" ? "unavailable" : json.status === "incompatible" ? "incompatible" : "error";
           const historicalMismatch = json.code === "HISTORICAL_S_MISMATCH";
           if (historicalMismatch && json.sameSession && json.degradedCue?.kind === "whole-message") {
-            const cue = locateAndApplyWholeMessageCue(json.degradedCue);
+            const cue = await locateAndApplyWholeMessageCue(json.degradedCue);
             const text = json.degradedCue.sourceMessage || json.currentSourceText || "";
             setReentry({
               busy: false,
@@ -2076,7 +2267,9 @@ function NotesController(React, clientCtx = {}) {
               total: cue.total,
               detail: cue.detail,
             });
-            setStatus(panelT("status.reentryHistoricalMismatch"));
+            setStatus(cue.presented
+              ? panelT("status.reentryHistoricalMismatch")
+              : panelT("status.reentryPresentationFailed"));
             return;
           }
           setReentry({ busy: false, kind, code: json.code, text: json.reason || "", historicalSnapshot: json.historicalSnapshot, currentSourceText: json.currentSourceText });
@@ -2084,7 +2277,17 @@ function NotesController(React, clientCtx = {}) {
           return;
         }
         if (json.sameSession) {
-          const hl = locateAndHighlight(json.exact);
+          const hl = await locateAndHighlight(json.exact);
+          if (!hl.presented && (hl.highlightedCount > 0 || hl.wholeMessage)) {
+            setReentry({
+              busy: false, kind: "cue-presentation-failed", sameSession: true, text: json.exact.text,
+              highlighted: false, partial: false, presentationFailed: true,
+              highlightedCount: hl.highlightedCount, wholeMessageCount: hl.wholeMessageCount,
+              total: hl.total, detail: hl.detail, context: json.context,
+            });
+            setStatus(panelT("status.reentryPresentationFailed"));
+            return;
+          }
           if (hl.wholeMessage) {
             setReentry({
               busy: false, kind: "cue-whole", sameSession: true, text: json.exact.text,
@@ -2152,7 +2355,7 @@ function NotesController(React, clientCtx = {}) {
     // composeCarryMerge 在 parent/child 两侧都非空时写入的 “## 来自父分支” /
     // “## 当前分支已有内容” 标题，两侧全空/一侧空不生成 wrapper——见 carry-merge.js）。
     // 此类 lane 是 parent/child 分组文本：倒序会弄乱分组或伪造跨 branch 统一 chronology
-    // → 该 lane **仅正序**（安全展示；不为此建新 model）。
+    // → 该 lane **仅正序**（安全展示；不为此建新 model，limitation 记录于 evidence）。
     // 按 fork/carry eligibility decision 两侧 marker 同时出现精确检测，非启发式拆分 legacy。
     const laneHasForkMerge = isMergeWrapperBody(text);
     // 展示单元 = parsedBody.nodes 的**引用**（不复制节点）。倒序仅当 viewDir==='newest'
@@ -3095,7 +3298,7 @@ function NotesController(React, clientCtx = {}) {
     // Notes behavior：列表标题行（已保存便签 N）右侧加轻量 <select>（新记录在前/旧记录在前），
     // value=viewDir、onChange=setViewDir；只切换展示顺序，无任何写路径。fork-merge
     // 检测为真的 lane（laneHasForkMerge）隐藏 select——正序即该 lane 唯一安全展示
-    // （此处直接说明 limitation；不为此建新 model）。
+    // （代码注释 + evidence 说明 limitation；不为此建新 model）。
     const notesListHeaderEl = createElement(
       "div",
       { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: "6px", margin: "6px 0", padding: "0 10px 6px", fontSize: "12px", borderBottom: "1px solid #e5e7eb" } },
@@ -3715,7 +3918,7 @@ function NotesController(React, clientCtx = {}) {
             })
           : null
       ),
-      // Session isolation：key={sessionId} —— session 切换即 remount NotesPanel，
+      // independent validation Notes behavior：key={sessionId} —— session 切换即 remount NotesPanel，
       // 保证 selection/tray/text 等全部 per-session 状态绝不跨 holder/session 携带
       // （外加 hydration effect 同步清空 + pump/poll/preview epoch+session guard 双保险）。
       open ? createElement(NotesPanel, { key: props.sessionId, sessionId: props.sessionId, onClose: () => setOpen(false), t: props.t || t }) : null

@@ -1,7 +1,7 @@
 // behavior regression—fork eligibility by historical SOURCE LOCATION
 // 非 capture time；覆盖 source-location eligibility and carry scenarios。
 //
-// 机械事实：session.fork 以 parent events[0..cut)
+// 机械事实（rc.2 源码实证，见 evidence）：session.fork 以 parent events[0..cut)
 // 为 child seed，live child Session.inheritedEventCount = 共享前缀长度（= 首个被排除的
 // parent 事件下标）；dsh-session 事件 seq === log 下标（seq=log.length、seed 从 0 连续）→
 // parent 锚定的 sourcePayload.segments[].eventSeq < seedLength ⟺ 源位在 fork cut 内。

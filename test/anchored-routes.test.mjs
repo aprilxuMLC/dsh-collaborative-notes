@@ -31,7 +31,7 @@ function urlFor(path) { return new URL(path, "http://x"); }
 
 // 真实 rc.2 sessionQuery.readSession 返回 corpus 存储形态的**扁平** event
 // （{ seq, type, time, data }，非 session.history 的 { event: {...} } 包裹形态；
-// The route must normalize the authoritative snapshot before it can be passed to
+// 2026-09-03 runtime evidence 确认）。route 必须归一化后才可喂给
 // buildSnapshotFromEvents——此 mock 用真实扁平形态做回归。
 const EVENTS = [
   { seq: 7, type: "user/message", time: 1788350218000, data: { id: "63cb3cea-12f5-4d88-94d7-b37cdcda9e35", content: [{ type: "text", text: "SOURCE-A" }], source: { kind: "user" } } },

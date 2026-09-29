@@ -303,17 +303,27 @@ console.log("— R13: v2 capture bridge（真实 DOM Selection → v2 locator �
   ok("v2 capture-time consistency", locatorSlicesMatch(loc, src, "加粗"));
 }
 
-console.log("— R14: v2 非 text block truthful reject + 非法 projectionVersion —");
+console.log("— R14: v2 mixed renderer-only blocks + 非法 projectionVersion —");
 {
-  const snapTool = [{ kind: "assistant", turn: 3, step: 5, seq: 101, content: [{ type: "tool-call", callId: "cc-1" }, { type: "text", text: "x" }] }];
+  const snapTool = [{ kind: "assistant", turn: 3, step: 5, seq: 101, content: [
+    { type: "reasoning", text: "内部 reasoning" },
+    { type: "text", text: "x" },
+    { type: "tool-call", callId: "cc-1" },
+  ] }];
   const w = makeWindow('<div data-chat-anchor-key="assistant-step:3:5"><p>x</p></div>');
   const d = w.document;
   const tn = d.querySelector("[data-chat-anchor-key] p").firstChild;
   const range = d.createRange();
   range.setStart(tn, 0);
   range.setEnd(tn, 1);
-  const err = (() => { try { selectionToSegments(range, d, snapTool, { projectionVersion: PROJECTION_VERSION_MARKDOWN }); return null; } catch (e) { return e.message; } })();
-  ok("v2 非 text block → 不猜 hidden，返回 projection failure", err !== null && /unsupported content block/i.test(err));
+  const seg = selectionToSegments(range, d, snapTool, { projectionVersion: PROJECTION_VERSION_MARKDOWN });
+  ok("v2 reasoning + text + tool-call → visible text capture succeeds", seg.segments.length === 1 && seg.segments[0].eventSeq === 101 && seg.selectedText === "x", JSON.stringify(seg));
+  const unknownBlock = [{ kind: "assistant", turn: 3, step: 5, seq: 101, content: [
+    { type: "text", text: "x" },
+    { type: "unknown-renderer-block" },
+  ] }];
+  const unknownErr = (() => { try { selectionToSegments(range, d, unknownBlock, { projectionVersion: PROJECTION_VERSION_MARKDOWN }); return null; } catch (e) { return e.message; } })();
+  ok("v2 unknown non-text block → truthful rejection", unknownErr !== null && /unsupported content block/i.test(unknownErr));
   const w2 = makeWindow('<div data-chat-anchor-key="assistant-step:3:5">x</div>');
   const d2 = w2.document;
   const r2 = d2.createRange();
@@ -343,7 +353,7 @@ console.log("— R15: 真实 renderer nodeKey 形态（<anchorSeq>:<kind><id>）
   ok("真实形态无 kind 前缀 → 回退 prefix 为 kind（旧桥）", nodeKeyToEvent("nokey", SNAPSHOT).reason !== undefined);
 }
 
-console.log("— DOM basis 对齐验证 —");
+console.log("— R16: DOM basis 对齐验证（BLOCKER 3）—");
 {
   // 一致：DOM basis == projection → capture 成功
   const snapOk = [{ kind: "assistant", turn: 3, step: 5, seq: 101, content: [{ type: "text", text: "加粗 **加粗** 和 [链接](u)" }] }];
@@ -477,7 +487,7 @@ console.log("— R17: effective-source 归一化（selection projection）—");
   ok("context-inject 显示≠source → 拒绝（prefix-match）", err3 !== null && /prefix-match/.test(err3));
 }
 
-console.log("— 尾部 chrome 结构验证（须行容器结构正证，wrapper 外 ≠ chrome）—");
+console.log("— R18: 尾部 chrome 结构验证（test BLOCKER round4：须行容器结构正证，wrapper 外 ≠ chrome）—");
 {
   // 真实 renderer 形态：`[data-time-hover-root]` 行容器，源码在内容分支 `_text` 内，
   // 时间戳在 actions 兄弟分支。结构判据不读取任何 class/local 名——fixture 用中性
@@ -750,6 +760,58 @@ console.log("— R21: adversarial check 对抗回归（button 是分支级证据
   r4.setEnd(btnText4, 2);
   const seg4 = selectionToSegments(r4, d4, snapTs);
   ok("button 内操作标签文本 → 节点级正证排除", seg4.segments[0].start === 0 && seg4.segments[0].end === 6, JSON.stringify(seg4.segments));
+}
+
+console.log("— R22: rc.2 nested-list trailing newline must not be duplicated —");
+{
+  const source = "- 第一项\n  - 子项\n- 后一项";
+  const snap = [{ kind: "assistant", turn: 1, step: 1, seq: 780, content: [{ type: "text", text: source }] }];
+  const w = makeWindow(
+    '<div data-chat-anchor-key="assistant-step:1:1"><ul>' +
+    '<li>第一项\n<ul><li>子项</li></ul>\n</li>' +
+    '<li>后一项</li>' +
+    '</ul></div>'
+  );
+  const d = w.document;
+  const anchor = d.querySelector("[data-chat-anchor-key]");
+  const projection = projectVisibleMarkdownContent(snap[0].content).text;
+  const basis = containerBasisText(anchor, d);
+  ok("nested-list projection = 第一项\\n子项\\n后一项", projection === "第一项\n子项\n后一项");
+  ok("nested-list basis equals projection", basis === projection, JSON.stringify({ basis, projection }));
+  ok("nested-list basis has no duplicate boundary newline", basis.length === 10 && (basis.match(/\n/g) || []).length === 2, JSON.stringify(basis));
+
+  const outerLis = d.querySelectorAll("li");
+  const after = outerLis[2].firstChild;
+  const afterRange = d.createRange();
+  afterRange.setStart(after, 0);
+  afterRange.setEnd(after, 1);
+  const afterExtent = rangeExtentInContainer(afterRange, anchor, d);
+  ok("after-boundary range starts at projection offset 7", afterExtent.startCP === 7 && afterExtent.endCP === 8 && afterExtent.totalCP === 10, JSON.stringify(afterExtent));
+
+  const afterSeg = selectionToSegments(afterRange, d, snap, { projectionVersion: PROJECTION_VERSION_MARKDOWN });
+  ok("after-boundary selection maps to 后", afterSeg.segments[0].start === 7 && afterSeg.segments[0].end === 8 && afterSeg.selectedText === "后", JSON.stringify(afterSeg));
+
+  const nestedText = outerLis[1].firstChild;
+  const crossing = d.createRange();
+  crossing.setStart(nestedText, 0);
+  crossing.setEnd(after, 1);
+  const crossingSeg = selectionToSegments(crossing, d, snap, { projectionVersion: PROJECTION_VERSION_MARKDOWN });
+  ok("cross-boundary selection preserves 子项\\n后", crossingSeg.segments[0].start === 4 && crossingSeg.segments[0].end === 8 && crossingSeg.selectedText === "子项\n后", JSON.stringify(crossingSeg));
+}
+
+console.log("— R23: adjacent renderer blocks without a trailing newline retain one separator —");
+{
+  const snap = [{ kind: "assistant", turn: 1, step: 1, seq: 781, content: [{ type: "text", text: "前\n后" }] }];
+  const w = makeWindow('<div data-chat-anchor-key="assistant-step:1:1"><p>前</p><p>后</p></div>');
+  const d = w.document;
+  const anchor = d.querySelector("[data-chat-anchor-key]");
+  ok("plain adjacent block basis retains one newline", containerBasisText(anchor, d) === "前\n后");
+  const second = d.querySelectorAll("p")[1].firstChild;
+  const range = d.createRange();
+  range.setStart(second, 0);
+  range.setEnd(second, 1);
+  const seg = selectionToSegments(range, d, snap);
+  ok("plain adjacent block range remains offset 2..3", seg.segments[0].start === 2 && seg.segments[0].end === 3 && seg.selectedText === "后", JSON.stringify(seg));
 }
 
 console.log("");
