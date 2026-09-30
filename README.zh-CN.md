@@ -7,7 +7,7 @@
 
 Collaborative Notes（协作便签）是一个面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的人机协作插件。它不是普通笔记本，也不是任务管理器、长期记忆或知识库。它在当前对话旁边增加一块**共享的临时工作区**，帮助人和 Agent 决定：什么现在应该继续占据注意力，什么可以安全放下；放下以后，又怎样在真正需要时准确地拿回来。
 
-当前 **release candidate** 针对 **DeepSeek Harness 0.1.5-rc.2** 验证。
+当前 **0.1.1 release** 针对 **DeepSeek Harness 0.1.5-rc.2** 验证。
 
 ---
 
@@ -170,7 +170,7 @@ npx @deepseek-ai/dsh@0.1.5-rc.2 web
 
 安装并成功重启 profile 后，Notes 入口（`📝`）会出现在 conversation header 的工具区，Collaborative Notes Skill 也会在当前运行时注册。更新 Bundle 并重启后，这项能力会恢复。移除 Bundle 并重启后，Notes UI 入口和运行时 Skill 会消失，但 workspace Notes 数据保留；重新安装并重启后，两者恢复，并继续使用仍然有效的 workspace binding。
 
-当前 release candidate 已包含运行所需的构建产物，因此公开 GitHub 发布形态不要求用户 clone 源码后再手工 build。仓库已经公开；未经认证的 clean-install/runtime gate 仍需在候选推送后针对实际 public candidate 完成。
+当前 0.1.1 release 已包含运行所需的构建产物，因此公开 GitHub 安装形态不要求用户 clone 源码后再手工 build。仓库已经公开，public GitHub install/runtime path 已针对已发布的 0.1.1 package 成功执行。
 
 第一次使用路径是：打开 Notes → 确认建议位置或选择其它位置 → 创建一条 Note → 可选地引用选中的文字。默认建议位置是 workspace 下的 `notes` 目录；自定义目录只有在 host 的目录选择能力接受后才会使用。一个 workspace 只有一个持久化确认的 binding。插件不会仅仅因为安装完成，就静默替用户猜测或重新绑定一个 Notes root。
 
@@ -188,7 +188,7 @@ dsh plugin --profile web remove dsh-collab-notes
 ## 当前支持范围与已知边界  
 **Current Support Boundary**
 
-已接受的运行时行为针对 **DeepSeek Harness 0.1.5-rc.2**，并已在隔离 acceptance 环境中执行；public 0.1.1 candidate 仍需完成推送后的 public clean-install gate，同时存在以下边界：
+已接受的运行时行为针对 **DeepSeek Harness 0.1.5-rc.2**，并已在隔离 acceptance 环境中执行；public 0.1.1 GitHub install/runtime path 已成功执行，以下边界仍然适用：
 
 - Source capture 当前限于单条普通、可选择的 user 或 assistant message；
 - reasoning / Think / tool-call 暂不作为稳定 Source capture surface；
@@ -215,9 +215,9 @@ dsh plugin --profile web remove dsh-collab-notes
 
 公开仓库只保留面向使用者和实现者需要的当前文档。内部研究、probe、部署证据和设计过程历史在本发布面之外单独维护。
 
-公开仓库会同时包含源码和当前 release 所需的构建产物。公开候选的可复现检查入口是 `npm run verify:public`；它依次运行构建、bundle contract、客户端测试和 Skill materialization validation。隔离的 DSH `0.1.5-rc.2` runtime 检查另外覆盖真实 `/api/notes-api` carrier、四个 lane 的读写、首次 workspace setup、save → readback 以及重启后的 workspace binding 保留。这些检查不替代后续从公开仓库进行的 clean-install gate。
+公开仓库会同时包含源码和当前 release 所需的构建产物。公开 release 的可复现检查入口是 `npm run verify:public`；它依次运行构建、bundle contract、客户端测试和 Skill materialization validation。隔离的 DSH `0.1.5-rc.2` runtime 检查另外覆盖真实 `/api/notes-api` carrier、四个 lane 的读写、首次 workspace setup、save → readback 以及重启后的 workspace binding 保留。这些检查与已经完成的公开仓库 clean-install/runtime gate 共同构成当前验证。
 
-最终公开 release 的门槛仍然是从全新 public repository 出发完成匿名 browse / clone / download / clean-install / runtime E2E。
+公开 release gate 已针对 public repository 完成，包括 public GitHub install、clean disposable host boot、served runtime 和 real conversation smoke。
 
 ## License
 

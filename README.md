@@ -6,7 +6,7 @@
 
 Collaborative Notes is a human–agent collaboration plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It is not a general notebook, task manager, long-term memory system, or knowledge base. It adds a **shared transient workspace** beside the current conversation, helping the user and the agent decide what should keep occupying attention now, what can be safely set aside, and how it can be brought back accurately when it matters again.
 
-The current **release candidate** is validated against **DeepSeek Harness 0.1.5-rc.2**.
+The current **0.1.1 release** is validated against **DeepSeek Harness 0.1.5-rc.2**.
 
 ---
 
@@ -159,11 +159,11 @@ claim that every companion package has the same exact version.
 
 After a successful install and profile restart, the Notes entry (`📝`) is available in the conversation-header utilities area while the Collaborative Notes Skill is registered in the active runtime. Updating the Bundle and restarting returns the same capability. Removing the Bundle and restarting removes the Notes UI entry and runtime Skill while preserving workspace Notes data; reinstalling and restarting restores them and reuses a still-valid workspace binding.
 
-The release candidate includes the built artifacts required at runtime, so the
-public GitHub release path does not require users to clone the source and build
-it manually. The repository is public; the final unauthenticated
-clean-install/runtime gate is checked against the actual public candidate
-after it is pushed.
+The 0.1.1 release includes the built artifacts required at runtime, so the
+public GitHub installation path does not require users to clone the source and
+build it manually. The repository is public, and the public GitHub
+install/runtime path has now been exercised successfully against the published
+0.1.1 package.
 
 First use is: open Notes → confirm the suggested location or choose another location → create a Note → optionally capture selected text. The default suggestion is the workspace's `notes` directory; a custom directory is used only after the host directory-selection capability accepts it. A workspace has one durable confirmed binding. Installing the plugin alone does not silently guess or rebind a Notes root.
 
@@ -182,8 +182,8 @@ After adding, updating, or removing a Bundle, restart the corresponding profile.
 
 The accepted runtime behavior targets **DeepSeek Harness 0.1.5-rc.2** and has
 been exercised in the isolated acceptance environment. The public 0.1.1
-candidate still requires its post-push public clean-install gate, with explicit
-boundaries:
+GitHub install/runtime path has now been exercised successfully; the explicit
+support boundaries remain:
 
 - Source capture is currently limited to one ordinary selectable user or assistant message;
 - reasoning / Think / tool-call surfaces are not currently treated as stable Source-capture surfaces;
@@ -216,10 +216,12 @@ the current release. Reproduce the candidate checks with
 tests, and Skill materialization validation. The isolated DSH `0.1.5-rc.2`
 runtime checks additionally cover the real `/api/notes-api` carrier,
 four-lane read/write, first-use workspace setup, save → readback, and
-workspace-binding retention after restart. These checks do not replace the
-later public-repository clean-install gate.
+workspace-binding retention after restart. These checks are complemented by
+the completed public-repository clean-install/runtime gate.
 
-The final public release gate remains fresh unauthenticated browse / clone / download / clean-install / runtime E2E from the public repository itself.
+The public release gate has now been completed against the public repository,
+including public GitHub installation, clean disposable host boot, served
+runtime, and real conversation smoke.
 
 ## License
 
